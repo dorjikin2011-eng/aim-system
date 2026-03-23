@@ -1,0 +1,105 @@
+--- assessmentController.original.ts
++++ assessmentController.updated.ts
+@@ -1,5 +1,8 @@
+ import { Request, Response } from 'express';
+ import { getDB, runAsync, getAsync, allAsync } from '../models/db';
++// ADD THESE IMPORTS
++import AssessmentCalculator from '../utils/AssessmentCalculator';
++import WeightedCalculationService from '../services/WeightedCalculationService';
+ 
+ // ... existing imports and code ...
+ 
+@@ -50,6 +53,24 @@
+     try {
+       const { assessment_id, indicator_id, response_data } = req.body;
+       
++      // === ADD THIS BLOCK FOR INDICATOR 4 CALCULATION ===
++      if (indicator_id === 'ind_cases') {
++        // Automatically calculate weighted sum for corruption cases
++        const counts = {
++          convictions: parseInt(response_data.convictions) || 0,
++          prosecutions: parseInt(response_data.prosecutions) || 0,
++          admin_actions: parseInt(response_data.admin_actions) || 0
++        };
++        
++        const calculationResult = WeightedCalculationService.calculateFromCounts(counts);
++        
++        // Add calculated weighted_sum to response data
++        response_data.weighted_sum = calculationResult.weighted_sum;
++        
++        // Use calculated points as the score
++        response_data.calculated_score = calculationResult.points;
++      }
++      // === END ADDED BLOCK ===
+       
+       const responseId = `resp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+       
+@@ -85,6 +106,20 @@
+     try {
+       const { assessment_id, responses } = req.body;
+       
++      // === ADD THIS BLOCK FOR AIMS-SPECIFIC PROCESSING ===
++      // Validate AIMS assessment completeness
++      const validation = AssessmentCalculator.validateAIMSAssessment(responses);
++      if (!validation.isValid) {
++        return res.status(400).json({
++          success: false,
++          error: 'Incomplete AIMS assessment',
++          missingIndicators: validation.missingIndicators,
++          warnings: validation.warnings
++        });
++      }
++      
++      // Process responses with AIMS calculations
++      const processedResponses = await AssessmentCalculator.processResponses(assessment_id, responses);
+       
+       await runAsync(database, 'BEGIN TRANSACTION');
+       
+@@ -92,7 +127,8 @@
+         // Update assessment status
+         await runAsync(database, 'UPDATE assessments SET status = ?, submitted_at = CURRENT_TIMESTAMP WHERE id = ?', ['SUBMITTED_TO_AGENCY', assessment_id]);
+         
+-        for (const response of responses) {
++        // Use processedResponses instead of original responses
++        for (const response of processedResponses) {
+           const responseId = `resp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+           
+           await runAsync(database, `
+@@ -116,6 +152,16 @@
+       
+       await runAsync(database, 'COMMIT');
+       
++      // === ADD THIS BLOCK FOR SCORING RESULTS ===
++      // Calculate total score and integrity level
++      const totalScore = AssessmentCalculator.calculateTotalScore(processedResponses);
++      const integrityLevel = AssessmentCalculator.determineIntegrityLevel(totalScore);
++      
++      // Update assessment with total score
++      await runAsync(database, 
++        'UPDATE assessments SET total_score = ?, integrity_level = ? WHERE id = ?',
++        [totalScore, integrityLevel.level, assessment_id]);
++      
+       return res.json({
+         success: true,
+         message: 'Assessment submitted successfully'
+@@ -194,6 +240,21 @@
+       }
+       
+       return res.json({
++        success: true,
++        data: {
++          assessment: assessmentData,
++          responses: responsesWithScores,
++          // === ADD THIS SECTION ===
++          scoring_summary: {
++            total_score: totalScore,
++            integrity_level: integrityLevel.level,
++            integrity_label: integrityLevel.label,
++            integrity_color: integrityLevel.color
++          }
++          // === END ADDED SECTION ===
++        }
++      });
++    } catch (error) {
+       console.error('Error in getAssessment:', error);
+       return res.status(500).json({

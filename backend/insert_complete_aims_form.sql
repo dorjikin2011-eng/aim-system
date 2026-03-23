@@ -1,0 +1,33 @@
+INSERT INTO form_templates (
+  id, 
+  code, 
+  name, 
+  description, 
+  template_type, 
+  indicator_ids, 
+  sections, 
+  validation_rules, 
+  ui_config, 
+  version, 
+  is_active, 
+  created_by, 
+  updated_by, 
+  created_at, 
+  updated_at
+) VALUES (
+  'tpl_aims_complete',
+  'AIMS_COMPLETE_2025',
+  'AIMS Complete Assessment Form',
+  'Complete assessment form for all 5 AIMS indicators per Guideline 2025-Rev2',
+  'assessment',
+  '["ind_iccs","ind_training","ind_ad","ind_cases","ind_atr"]',
+  '[{"id":"section_iccs","title":"Internal Corruption Control Systems (ICCS)","displayOrder":1,"description":"Functioning of the agency''s four core integrity systems","fields":[{"id":"f1","label":"Complaint System Exists","type":"boolean","parameterCode":"complaint_exists","required":true,"displayOrder":1},{"id":"f2","label":"Complaint System Functions","type":"boolean","parameterCode":"complaint_functions","required":true,"displayOrder":2},{"id":"f3","label":"Conflict System Exists","type":"boolean","parameterCode":"conflict_exists","required":true,"displayOrder":3},{"id":"f4","label":"Conflict System Functions","type":"boolean","parameterCode":"conflict_functions","required":true,"displayOrder":4},{"id":"f5","label":"Gift System Exists","type":"boolean","parameterCode":"gift_exists","required":true,"displayOrder":5},{"id":"f6","label":"Gift System Functions","type":"boolean","parameterCode":"gift_functions","required":true,"displayOrder":6},{"id":"f7","label":"ACC Recommendations Status","type":"select","parameterCode":"proactive_level","required":true,"displayOrder":7,"options":[{"value":"full","label":"Present & Functioning (7 pts)"},{"value":"baseline","label":"No ACC Recommendations (3 pts)"},{"value":"zero","label":"ACC Recommendations Not Implemented (0 pts)"}]}]},{"id":"section_training","title":"Integrity Capacity Building","displayOrder":2,"description":"Staff Training & Awareness + ACC''s e-Learning completion","fields":[{"id":"f8","label":"Total Employees","type":"number","parameterCode":"total_employees","required":true,"displayOrder":1,"min":0},{"id":"f9","label":"Completed e-Learning","type":"number","parameterCode":"completed_employees","required":true,"displayOrder":2,"min":0}]},{"id":"section_ad","title":"Asset Declaration (AD) Compliance","displayOrder":3,"description":"% of covered officials submitting AD on time","fields":[{"id":"f10","label":"Total Covered Officials","type":"number","parameterCode":"total_covered_officials","required":true,"displayOrder":1,"min":0},{"id":"f11","label":"Officials Submitted AD on Time","type":"number","parameterCode":"officials_submitted_on_time","required":true,"displayOrder":2,"min":0}]},{"id":"section_cases","title":"Corruption Case Severity & Resolution","displayOrder":4,"description":"Weighted severity of corruption cases involving agency staff","fields":[{"id":"f12","label":"Number of Convictions","type":"number","parameterCode":"convictions","required":true,"displayOrder":1,"min":0,"default":0},{"id":"f13","label":"Number of Prosecutions/OAG Referrals","type":"number","parameterCode":"prosecutions","required":true,"displayOrder":2,"min":0,"default":0},{"id":"f14","label":"Number of ACC-confirmed Administrative Actions","type":"number","parameterCode":"admin_actions","required":true,"displayOrder":3,"min":0,"default":0}]},{"id":"section_atr","title":"ATR Responsiveness","displayOrder":5,"description":"% of ATRs submitted by agency within ACC''s deadlines","fields":[{"id":"f15","label":"Total ATRs Received","type":"number","parameterCode":"total_atrs","required":true,"displayOrder":1,"min":0},{"id":"f16","label":"ATRs Submitted on Time","type":"number","parameterCode":"atrs_submitted_on_time","required":true,"displayOrder":2,"min":0}]}]',
+  '{"requireAllFields":true}',
+  '{"showScoreCalculations":true,"enableAutoSave":true,"sectionCollapsible":true,"showProgressTracker":true}',
+  '1.0.0',
+  1,
+  'system',
+  'system',
+  CURRENT_TIMESTAMP,
+  CURRENT_TIMESTAMP
+);
