@@ -1,0 +1,18 @@
+# Node
+node_modules/
+
+# Environment
+.env
+.env.local
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# OS
+.DS_Store
+
+# Build
+dist/
+build/
