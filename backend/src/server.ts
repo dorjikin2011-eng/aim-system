@@ -1,5 +1,5 @@
 // backend/src/server.ts
-/// <reference types="node" />
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -145,6 +145,14 @@ app.post('/api/auth/reset/test-forgot-password', (req, res) => {
   res.json({
     success: true,
     message: 'Test route working. Email would be sent to: ' + req.body.email
+  });
+});
+
+/* -------------------- Simple Route -------------------- */
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'AIMS Backend API is running 🚀'
   });
 });
 
