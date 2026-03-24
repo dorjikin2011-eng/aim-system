@@ -3,16 +3,15 @@ import nodemailer from 'nodemailer';
 
 // Create transporter using SMTP configuration from environment variables
 const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: parseInt(process.env.EMAIL_PORT || '587'),
-  secure: process.env.EMAIL_SECURE === 'true',
+  host: process.env.SMTP_HOST || process.env.EMAIL_HOST,
+  port: Number(process.env.SMTP_PORT || process.env.EMAIL_PORT) || 587,
+  secure: (process.env.SMTP_SECURE || process.env.EMAIL_SECURE) === 'true', // convert string to boolean
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+    user: process.env.SMTP_USER || process.env.EMAIL_USER,
+    pass: process.env.SMTP_PASS || process.env.EMAIL_PASS
   },
-  // Additional options for better compatibility
   tls: {
-    rejectUnauthorized: false // Set to true in production with valid certificates
+    rejectUnauthorized: false // safe fallback for self-signed certs; set true in production
   },
   connectionTimeout: 10000, // 10 seconds
   greetingTimeout: 10000,
@@ -25,8 +24,8 @@ transporter.verify((error) => {
     console.error('❌ Email transporter verification failed:', error);
   } else {
     console.log('✅ Email transporter is ready to send messages');
-    console.log(`📧 Using SMTP: ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}`);
-    console.log(`📨 Sender: ${process.env.EMAIL_FROM || process.env.EMAIL_USER}`);
+    console.log(`📧 Using SMTP: ${process.env.SMTP_HOST || process.env.EMAIL_HOST}:${process.env.SMTP_PORT || process.env.EMAIL_PORT}`);
+    console.log(`📨 Sender: ${process.env.SMTP_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER || process.env.EMAIL_USER}`);
   }
 });
 
@@ -57,14 +56,13 @@ export async function sendEmail({
   attachments 
 }: EmailOptions): Promise<nodemailer.SentMessageInfo> {
   const mailOptions = {
-    from: `"ACC AIMS System" <${process.env.EMAIL_FROM || process.env.EMAIL_USER}>`,
+    from: `"ACC AIMS System" <${process.env.SMTP_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER || process.env.EMAIL_USER}>`,
     to,
     subject,
     html,
     cc,
     bcc,
     attachments,
-    // Headers for better email client compatibility
     headers: {
       'X-Priority': '1',
       'X-MSMail-Priority': 'High',
@@ -79,9 +77,7 @@ export async function sendEmail({
     return info;
   } catch (error: any) {
     console.error('❌ Error sending email:', error);
-    if (error.response) {
-      console.error('📧 SMTP Response:', error.response);
-    }
+    if (error.response) console.error('📧 SMTP Response:', error.response);
     throw new Error(`Failed to send email: ${error.message}`);
   }
 }

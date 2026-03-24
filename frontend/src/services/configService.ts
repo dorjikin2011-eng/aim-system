@@ -11,7 +11,7 @@ import type {
   UpdateIndicatorInput
 } from '../types/config';
 
-const API_BASE = '/api';
+const API_BASE = 'https://aim-system.onrender.com/api';
 
 // Helper: convert camelCase <-> snake_case
 const toSnakeCase = (obj: any): any => {
