@@ -5,8 +5,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import session from 'express-session';
-import { createTables } from './models/db';
-
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -43,32 +41,41 @@ import assignedOfficerRoutes from './routes/assignedOfficerRoutes';
 import { getAgencyById } from './controllers/agencyController';
 import { getSystemConfig } from './controllers/configController';
 
+// DB utilities
+import dbUtils from './models/db';
+
 const app = express();
 
 /* -------------------- Initialize DB -------------------- */
-createTables()
-  .then(() => console.log('✅ Tables initialized'))
-  .catch(console.error);
+
+(async () => {
+  try {
+    await dbUtils.createTables();
+    console.log('✅ Tables initialized');
+
+    await dbUtils.initializeDatabase(); // includes default/seeding data
+    console.log('✅ Default data initialized');
+  } catch (err) {
+    console.error('❌ DB initialization failed:', err);
+  }
+})();
 
 /* -------------------- Security Headers -------------------- */
 app.use(
   helmet({
-    contentSecurityPolicy: false, // safer for deployment (avoids blocking Vite frontend)
+    contentSecurityPolicy: false, // avoids blocking Vite frontend
   })
 );
 
 /* -------------------- CORS -------------------- */
-// server.ts
 const allowedOrigins = (process.env.FRONTEND_URL || '').split(',');
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like curl/Postman)
-      if (!origin) return callback(null, true);
+      if (!origin) return callback(null, true); // allow curl/Postman
       if (allowedOrigins.indexOf(origin) === -1) {
-        const msg = `CORS blocked: ${origin}`;
-        return callback(new Error(msg), false);
+        return callback(new Error(`CORS blocked: ${origin}`), false);
       }
       return callback(null, true);
     },
@@ -91,7 +98,7 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: false, // will keep false for now (Render handles HTTPS)
+      secure: false,
       sameSite: 'lax',
       maxAge: 24 * 60 * 60 * 1000,
     },
@@ -155,15 +162,15 @@ app.use('/api/agency', authMiddleware, agencyRoutes);
 app.post('/api/auth/reset/test-forgot-password', (req, res) => {
   res.json({
     success: true,
-    message: 'Test route working. Email would be sent to: ' + req.body.email
+    message: 'Test route working. Email would be sent to: ' + req.body.email,
   });
 });
 
 /* -------------------- Simple Route -------------------- */
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   res.json({
     success: true,
-    message: 'AIMS Backend API is running 🚀'
+    message: 'AIMS Backend API is running 🚀',
   });
 });
 
@@ -181,7 +188,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   });
 });
 
-/* -------------------- START SERVER (IMPORTANT) -------------------- */
+/* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
