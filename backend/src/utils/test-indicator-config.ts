@@ -1,5 +1,5 @@
 // backend/test-indicator-config.ts
-import { IndicatorConfig } from './src/models/IndicatorConfig';
+import { IndicatorConfig } from '../models/IndicatorConfig';
 
 async function testIndicatorConfig() {
   try {

@@ -6,6 +6,32 @@ import crypto from 'crypto';
 import { homedir } from 'os';
 import bcrypt from 'bcrypt';
 
+import { Pool } from 'pg';
+
+let pgPool: Pool | null = null;
+
+export function getPostgres(): Pool {
+  if (!pgPool) {
+    console.log('📡 Connecting to PostgreSQL...');
+
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: false
+    });
+
+    pgPool.connect()
+      .then(client => {
+        console.log('✅ PostgreSQL connected');
+        client.release();
+      })
+      .catch(err => {
+        console.error('❌ PostgreSQL connection failed:', err.message);
+      });
+  }
+
+  return pgPool;
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;

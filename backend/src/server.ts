@@ -7,6 +7,9 @@ import cookieParser from 'cookie-parser';
 import session from 'express-session';
 import { createTables } from './models/db';
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 // Middleware
 import { attachSessionUser } from './middleware/sessionUser';
 
