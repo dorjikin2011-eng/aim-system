@@ -11,6 +11,7 @@
   "dependencies": {
     "bcrypt": "^6.0.0",
     "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^9.0.0",
     "connect-sqlite3": "^0.9.16",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
@@ -22,7 +23,6 @@
     "multer": "^2.0.2",
     "nodemailer": "^7.0.12",
     "pg": "^8.20.0",
-    "connect-pg-simple": "^9.0.0",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
     "uuid": "^13.0.0"
@@ -37,7 +37,7 @@
     "@types/express-session": "^1.18.2",
     "@types/multer": "^2.0.0",
     "@types/node": "^20.19.37",
-    "@types/nodemailer": "^7.0.5",
+    "@types/nodemailer": "^7.0.11",
     "@types/pg": "^8.20.0",
     "@types/sqlite3": "^3.1.11",
     "@types/uuid": "^10.0.0",
