@@ -1,22 +1,36 @@
-// backend/src/models/db.ts - CORRECTED WITH COMPLETE AIMS SEEDING FROM GUIDELINE
+// backend/src/models/db.ts - PostgreSQL with SQLite fallback for development
 import fs from 'fs';
 import path from 'path';
 import sqlite3 from 'sqlite3';
 import crypto from 'crypto';
 import { homedir } from 'os';
 import bcrypt from 'bcrypt';
+import { Pool, QueryResult, PoolClient } from 'pg';
 
-import { Pool } from 'pg';
+// Database type detection
+const isProduction = process.env.NODE_ENV === 'production';
+const usePostgres = isProduction || process.env.USE_POSTGRES === 'true';
 
 let pgPool: Pool | null = null;
+let sqliteDb: sqlite3.Database | null = null;
 
+// ============================================================================
+// PostgreSQL Connection Management
+// ============================================================================
 export function getPostgres(): Pool {
   if (!pgPool) {
     console.log('📡 Connecting to PostgreSQL...');
 
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: false
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+
+    pgPool.on('error', (err) => {
+      console.error('❌ Unexpected PostgreSQL error:', err.message);
     });
 
     pgPool.connect()
@@ -26,295 +40,581 @@ export function getPostgres(): Pool {
       })
       .catch(err => {
         console.error('❌ PostgreSQL connection failed:', err.message);
+        if (isProduction) {
+          console.error('🚨 Production database connection failed. Exiting...');
+          process.exit(1);
+        }
       });
   }
 
   return pgPool;
 }
 
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  return 'Unknown error occurred';
-}
-
-function runAsync(db: sqlite3.Database, sql: string, params: any[] = []): Promise<void> {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, err => err ? reject(err) : resolve());
-  });
-}
-
-function getAsync<T>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T | null> {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => err ? reject(err) : resolve(row as T || null));
-  });
-}
-
-function allAsync<T>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T[]> {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows as T[]));
-  });
-}
-
-let db: sqlite3.Database | null = null;
-
-export function getDB(): sqlite3.Database {
-  if (!db) {
-    // Use local database file instead of home directory
-    const dbPath = './aim-system.db'; // This will look in the current working directory
-    console.log(`📁 Database path: ${dbPath}`);
-    console.log(`📁 Database ABSOLUTE path: ${path.resolve(dbPath)}`);
-    console.log(`📁 Home directory: ${homedir()}`);
-    console.log(`📁 File exists: ${fs.existsSync(dbPath)}`);
-    console.log(`📁 File size: ${fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 'N/A'} bytes`);
-    db = new sqlite3.Database(dbPath, (err) => {
+// ============================================================================
+// SQLite Connection Management (for development)
+// ============================================================================
+export function getSQLite(): sqlite3.Database {
+  if (!sqliteDb) {
+    const dbPath = process.env.SQLITE_PATH || './aim-system.db';
+    console.log(`📁 SQLite database path: ${dbPath}`);
+    console.log(`📁 SQLite absolute path: ${path.resolve(dbPath)}`);
+    
+    sqliteDb = new sqlite3.Database(dbPath, (err) => {
       if (err) {
-        console.error('❌ Failed to open database:', err.message);
-        process.exit(1);
+        console.error('❌ Failed to open SQLite database:', err.message);
+        if (isProduction) {
+          process.exit(1);
+        }
       } else {
         console.log('✅ SQLite database connected');
-        // Test a query immediately
-        db!.get('SELECT COUNT(*) as count FROM users', [], (err, row: any) => {
+        sqliteDb!.run('PRAGMA foreign_keys = ON');
+        sqliteDb!.run('PRAGMA journal_mode = WAL');
+        
+        // Test query
+        sqliteDb!.get('SELECT COUNT(*) as count FROM users', [], (err, row: any) => {
           if (err) console.error('❌ Test query failed:', err.message);
-          else console.log(`📊 Initial user count: ${row.count}`);
-          });
+          else console.log(`📊 Initial user count: ${row?.count || 0}`);
+        });
       }
     });
-    db.run('PRAGMA foreign_keys = ON');
-    db.run('PRAGMA journal_mode = WAL');
   }
-  return db;
+  return sqliteDb;
 }
 
-export { runAsync, getAsync, allAsync };
+// ============================================================================
+// Unified Database Interface
+// ============================================================================
+export function getDB(): sqlite3.Database | Pool {
+  if (usePostgres) {
+    return getPostgres();
+  } else {
+    return getSQLite();
+  }
+}
+
+// Helper to check if using PostgreSQL
+export function isUsingPostgres(): boolean {
+  return usePostgres;
+}
 
 // ============================================================================
-// CREATE TABLES WITH CORRECT SCHEMA (INCLUDING ALL REQUIRED COLUMNS)
+// Unified Async Query Functions
+// ============================================================================
+
+// Run a query (INSERT, UPDATE, DELETE)
+export async function runAsync(db: sqlite3.Database | Pool, sql: string, params: any[] = []): Promise<any> {
+  if (db instanceof Pool) {
+    // PostgreSQL
+    const client = await db.connect();
+    try {
+      // Convert SQLite parameter placeholders (?) to PostgreSQL ($1, $2, etc.)
+      let pgSql = sql;
+      if (sql.includes('?')) {
+        pgSql = sql.replace(/\?/g, (match, offset) => {
+          const index = sql.substring(0, offset).split('?').length;
+          return `$${index}`;
+        });
+      }
+      
+      // Convert SQLite datetime functions to PostgreSQL
+      pgSql = pgSql.replace(/CURRENT_TIMESTAMP/gi, 'CURRENT_TIMESTAMP');
+      pgSql = pgSql.replace(/DATETIME\(/gi, 'TIMESTAMP(');
+      
+      const result = await client.query(pgSql, params);
+      return result;
+    } finally {
+      client.release();
+    }
+  } else {
+    // SQLite
+    return new Promise((resolve, reject) => {
+      db.run(sql, params, function(err) {
+        if (err) reject(err);
+        else resolve(this);
+      });
+    });
+  }
+}
+
+// Get a single row
+export async function getAsync<T>(db: sqlite3.Database | Pool, sql: string, params: any[] = []): Promise<T | null> {
+  if (db instanceof Pool) {
+    // PostgreSQL
+    const client = await db.connect();
+    try {
+      let pgSql = sql;
+      if (sql.includes('?')) {
+        pgSql = sql.replace(/\?/g, (match, offset) => {
+          const index = sql.substring(0, offset).split('?').length;
+          return `$${index}`;
+        });
+      }
+      
+      pgSql = pgSql.replace(/CURRENT_TIMESTAMP/gi, 'CURRENT_TIMESTAMP');
+      pgSql = pgSql.replace(/DATETIME\(/gi, 'TIMESTAMP(');
+      
+      const result = await client.query(pgSql, params);
+      return (result.rows[0] as T) || null;
+    } finally {
+      client.release();
+    }
+  } else {
+    // SQLite
+    return new Promise((resolve, reject) => {
+      db.get(sql, params, (err, row) => {
+        if (err) reject(err);
+        else resolve(row as T || null);
+      });
+    });
+  }
+}
+
+// Get multiple rows
+export async function allAsync<T>(db: sqlite3.Database | Pool, sql: string, params: any[] = []): Promise<T[]> {
+  if (db instanceof Pool) {
+    // PostgreSQL
+    const client = await db.connect();
+    try {
+      let pgSql = sql;
+      if (sql.includes('?')) {
+        pgSql = sql.replace(/\?/g, (match, offset) => {
+          const index = sql.substring(0, offset).split('?').length;
+          return `$${index}`;
+        });
+      }
+      
+      pgSql = pgSql.replace(/CURRENT_TIMESTAMP/gi, 'CURRENT_TIMESTAMP');
+      pgSql = pgSql.replace(/DATETIME\(/gi, 'TIMESTAMP(');
+      
+      const result = await client.query(pgSql, params);
+      return result.rows as T[];
+    } finally {
+      client.release();
+    }
+  } else {
+    // SQLite
+    return new Promise((resolve, reject) => {
+      db.all(sql, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows as T[]);
+      });
+    });
+  }
+}
+
+// ============================================================================
+// CREATE TABLES WITH POSTGRESQL COMPATIBLE SCHEMA
 // ============================================================================
 export async function createTables() {
-  const database = getDB();
+  const db = getDB();
   
-  // Users table
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS users (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN (
-        'commissioner', 'director', 'system_admin',
-        'prevention_officer', 'agency_head', 'focal_person'
-      )),
-      agency_id TEXT,
-      password_reset_token TEXT,
-      password_reset_expires DATETIME,
-      last_password_change DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_login DATETIME,
-      login_attempts INTEGER DEFAULT 0,
-      lock_until DATETIME,
-      is_active BOOLEAN DEFAULT 1,
-      department TEXT,
-      phone TEXT,
-      profile_image TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+  // Check if using PostgreSQL for table creation syntax
+  const isPG = db instanceof Pool;
   
-  // Agencies table
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS agencies (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      sector TEXT NOT NULL,
-      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'archived')),
-      contact_person TEXT,
-      contact_email TEXT,
-      contact_phone TEXT,
-      address TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  
-  // Assignments table
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS assignments (
-      id TEXT PRIMARY KEY,
-      prevention_officer_id TEXT NOT NULL,
-      agency_id TEXT NOT NULL,
-      assigned_by TEXT NOT NULL,
-      assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      notes TEXT,
-      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled', 'inactive')),
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (prevention_officer_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
-      FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
-    );
-  `);
-  
-  // Assessments table - CORRECTED WITH ALL REQUIRED COLUMNS
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS assessments (
-      id TEXT PRIMARY KEY,
-      agency_id TEXT NOT NULL,
-      fiscal_year TEXT NOT NULL,
-      status TEXT NOT NULL CHECK(status IN ('DRAFT', 'SUBMITTED_TO_AGENCY', 'AWAITING_VALIDATION', 'FINALIZED')) DEFAULT 'DRAFT',
-      overall_score REAL,
-      officer_remarks TEXT,
-      agency_remarks TEXT,
-      assigned_officer_id TEXT NOT NULL,
-      validated_by TEXT,
-      validated_at DATETIME,
-      submitted_at DATETIME,
-      finalized_at DATETIME,
-      finalized_by TEXT,
-      finalization_notes TEXT,
-      unlocked_at DATETIME,
-      unlocked_by TEXT,
-      unlock_reason TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
-      FOREIGN KEY (assigned_officer_id) REFERENCES users(id),
-      FOREIGN KEY (validated_by) REFERENCES users(id),
-      UNIQUE(agency_id, fiscal_year)
-    );
-  `);
-  
-  // Dynamic assessment responses table
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS dynamic_assessment_responses (
-      id TEXT PRIMARY KEY,
-      assessment_id TEXT NOT NULL,
-      indicator_id TEXT NOT NULL,
-      response_data TEXT NOT NULL DEFAULT '{}',
-      calculated_score REAL,
-      manual_score REAL,
-      final_score REAL,
-      evidence_files TEXT DEFAULT '[]',
-      comments TEXT,
-      validated_by TEXT,
-      validated_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (assessment_id) REFERENCES assessments(id) ON DELETE CASCADE,
-      FOREIGN KEY (indicator_id) REFERENCES indicators(id) ON DELETE CASCADE,
-      UNIQUE(assessment_id, indicator_id)
-    );
-  `);
-  
-  // System config table
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS system_config (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      config_key TEXT UNIQUE NOT NULL,
-      config_value TEXT NOT NULL,
-      config_type TEXT DEFAULT 'string' CHECK(config_type IN ('string', 'number', 'boolean', 'json', 'array')),
-      category TEXT DEFAULT 'general',
-      description TEXT,
-      is_public BOOLEAN DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  
-  // Indicators table
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS indicators (
-      id TEXT PRIMARY KEY,
-      code TEXT UNIQUE NOT NULL,
-      name TEXT NOT NULL,
-      description TEXT,
-      category TEXT NOT NULL CHECK(category IN ('compliance', 'capacity', 'enforcement', 'responsiveness', 'innovation', 'other')),
-      weight REAL DEFAULT 0 CHECK(weight >= 0 AND weight <= 100),
-      max_score REAL DEFAULT 100,
-      scoring_method TEXT DEFAULT 'sum' CHECK(scoring_method IN ('sum', 'average', 'weighted', 'formula', 'conditional', 'manual')),
-      formula TEXT,
-      parameters TEXT NOT NULL DEFAULT '[]',
-      scoring_rules TEXT NOT NULL DEFAULT '[]',
-      ui_config TEXT DEFAULT '{}',
-      is_active BOOLEAN DEFAULT 1,
-      display_order INTEGER DEFAULT 0,
-      version INTEGER DEFAULT 1,
-      created_by TEXT,
-      updated_by TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  
-  // Form templates table
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS form_templates (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      template_type TEXT NOT NULL CHECK(template_type IN ('assessment', 'report', 'data_collection', 'custom')),
-      indicator_ids TEXT DEFAULT '[]',
-      sections TEXT NOT NULL DEFAULT '[]',
-      validation_rules TEXT DEFAULT '{}',
-      ui_config TEXT DEFAULT '{}',
-      version TEXT DEFAULT '1.0',
-      is_active BOOLEAN DEFAULT 1,
-      created_by TEXT,
-      updated_by TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-  
-  // Configuration versions table
-  await runAsync(database, `
-    CREATE TABLE IF NOT EXISTS configuration_versions (
-      id TEXT PRIMARY KEY,
-      version_name TEXT NOT NULL,
-      version_number TEXT UNIQUE NOT NULL,
-      description TEXT,
-      indicators TEXT NOT NULL DEFAULT '[]',
-      form_templates TEXT NOT NULL DEFAULT '[]',
-      system_config TEXT NOT NULL DEFAULT '{}',
-      is_active BOOLEAN DEFAULT 0,
-      applied_at DATETIME,
-      applied_by TEXT,
-      created_by TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+  if (isPG) {
+    console.log('📝 Creating tables in PostgreSQL...');
+    
+    // Users table - PostgreSQL version
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN (
+          'commissioner', 'director', 'system_admin',
+          'prevention_officer', 'agency_head', 'focal_person'
+        )),
+        agency_id TEXT,
+        password_reset_token TEXT,
+        password_reset_expires TIMESTAMP,
+        last_password_change TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_login TIMESTAMP,
+        login_attempts INTEGER DEFAULT 0,
+        lock_until TIMESTAMP,
+        is_active BOOLEAN DEFAULT TRUE,
+        department TEXT,
+        phone TEXT,
+        profile_image TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Agencies table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS agencies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sector TEXT NOT NULL,
+        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'archived')),
+        contact_person TEXT,
+        contact_email TEXT,
+        contact_phone TEXT,
+        address TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Assignments table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS assignments (
+        id TEXT PRIMARY KEY,
+        prevention_officer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        agency_id TEXT NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+        assigned_by TEXT NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        notes TEXT,
+        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled', 'inactive')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Assessments table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS assessments (
+        id TEXT PRIMARY KEY,
+        agency_id TEXT NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+        fiscal_year TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('DRAFT', 'SUBMITTED_TO_AGENCY', 'AWAITING_VALIDATION', 'FINALIZED')) DEFAULT 'DRAFT',
+        overall_score REAL,
+        officer_remarks TEXT,
+        agency_remarks TEXT,
+        assigned_officer_id TEXT NOT NULL REFERENCES users(id),
+        validated_by TEXT REFERENCES users(id),
+        validated_at TIMESTAMP,
+        submitted_at TIMESTAMP,
+        finalized_at TIMESTAMP,
+        finalized_by TEXT,
+        finalization_notes TEXT,
+        unlocked_at TIMESTAMP,
+        unlocked_by TEXT,
+        unlock_reason TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(agency_id, fiscal_year)
+      );
+    `);
+    
+    // Dynamic assessment responses table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS dynamic_assessment_responses (
+        id TEXT PRIMARY KEY,
+        assessment_id TEXT NOT NULL REFERENCES assessments(id) ON DELETE CASCADE,
+        indicator_id TEXT NOT NULL REFERENCES indicators(id) ON DELETE CASCADE,
+        response_data TEXT NOT NULL DEFAULT '{}',
+        calculated_score REAL,
+        manual_score REAL,
+        final_score REAL,
+        evidence_files TEXT DEFAULT '[]',
+        comments TEXT,
+        validated_by TEXT,
+        validated_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(assessment_id, indicator_id)
+      );
+    `);
+    
+    // System config table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS system_config (
+        id SERIAL PRIMARY KEY,
+        config_key TEXT UNIQUE NOT NULL,
+        config_value TEXT NOT NULL,
+        config_type TEXT DEFAULT 'string' CHECK(config_type IN ('string', 'number', 'boolean', 'json', 'array')),
+        category TEXT DEFAULT 'general',
+        description TEXT,
+        is_public BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Indicators table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS indicators (
+        id TEXT PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        category TEXT NOT NULL CHECK(category IN ('compliance', 'capacity', 'enforcement', 'responsiveness', 'innovation', 'other')),
+        weight REAL DEFAULT 0 CHECK(weight >= 0 AND weight <= 100),
+        max_score REAL DEFAULT 100,
+        scoring_method TEXT DEFAULT 'sum' CHECK(scoring_method IN ('sum', 'average', 'weighted', 'formula', 'conditional', 'manual')),
+        formula TEXT,
+        parameters TEXT NOT NULL DEFAULT '[]',
+        scoring_rules TEXT NOT NULL DEFAULT '[]',
+        ui_config TEXT DEFAULT '{}',
+        is_active BOOLEAN DEFAULT TRUE,
+        display_order INTEGER DEFAULT 0,
+        version INTEGER DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Form templates table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS form_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        template_type TEXT NOT NULL CHECK(template_type IN ('assessment', 'report', 'data_collection', 'custom')),
+        indicator_ids TEXT DEFAULT '[]',
+        sections TEXT NOT NULL DEFAULT '[]',
+        validation_rules TEXT DEFAULT '{}',
+        ui_config TEXT DEFAULT '{}',
+        version TEXT DEFAULT '1.0',
+        is_active BOOLEAN DEFAULT TRUE,
+        created_by TEXT,
+        updated_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Configuration versions table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS configuration_versions (
+        id TEXT PRIMARY KEY,
+        version_name TEXT NOT NULL,
+        version_number TEXT UNIQUE NOT NULL,
+        description TEXT,
+        indicators TEXT NOT NULL DEFAULT '[]',
+        form_templates TEXT NOT NULL DEFAULT '[]',
+        system_config TEXT NOT NULL DEFAULT '{}',
+        is_active BOOLEAN DEFAULT FALSE,
+        applied_at TIMESTAMP,
+        applied_by TEXT,
+        created_by TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+  } else {
+    // SQLite version (original)
+    const sqlite = db as sqlite3.Database;
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN (
+          'commissioner', 'director', 'system_admin',
+          'prevention_officer', 'agency_head', 'focal_person'
+        )),
+        agency_id TEXT,
+        password_reset_token TEXT,
+        password_reset_expires DATETIME,
+        last_password_change DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_login DATETIME,
+        login_attempts INTEGER DEFAULT 0,
+        lock_until DATETIME,
+        is_active BOOLEAN DEFAULT 1,
+        department TEXT,
+        phone TEXT,
+        profile_image TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS agencies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        sector TEXT NOT NULL,
+        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'archived')),
+        contact_person TEXT,
+        contact_email TEXT,
+        contact_phone TEXT,
+        address TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS assignments (
+        id TEXT PRIMARY KEY,
+        prevention_officer_id TEXT NOT NULL,
+        agency_id TEXT NOT NULL,
+        assigned_by TEXT NOT NULL,
+        assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        notes TEXT,
+        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled', 'inactive')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (prevention_officer_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+        FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS assessments (
+        id TEXT PRIMARY KEY,
+        agency_id TEXT NOT NULL,
+        fiscal_year TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('DRAFT', 'SUBMITTED_TO_AGENCY', 'AWAITING_VALIDATION', 'FINALIZED')) DEFAULT 'DRAFT',
+        overall_score REAL,
+        officer_remarks TEXT,
+        agency_remarks TEXT,
+        assigned_officer_id TEXT NOT NULL,
+        validated_by TEXT,
+        validated_at DATETIME,
+        submitted_at DATETIME,
+        finalized_at DATETIME,
+        finalized_by TEXT,
+        finalization_notes TEXT,
+        unlocked_at DATETIME,
+        unlocked_by TEXT,
+        unlock_reason TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+        FOREIGN KEY (assigned_officer_id) REFERENCES users(id),
+        FOREIGN KEY (validated_by) REFERENCES users(id),
+        UNIQUE(agency_id, fiscal_year)
+      );
+    `);
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS dynamic_assessment_responses (
+        id TEXT PRIMARY KEY,
+        assessment_id TEXT NOT NULL,
+        indicator_id TEXT NOT NULL,
+        response_data TEXT NOT NULL DEFAULT '{}',
+        calculated_score REAL,
+        manual_score REAL,
+        final_score REAL,
+        evidence_files TEXT DEFAULT '[]',
+        comments TEXT,
+        validated_by TEXT,
+        validated_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (assessment_id) REFERENCES assessments(id) ON DELETE CASCADE,
+        FOREIGN KEY (indicator_id) REFERENCES indicators(id) ON DELETE CASCADE,
+        UNIQUE(assessment_id, indicator_id)
+      );
+    `);
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS system_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_key TEXT UNIQUE NOT NULL,
+        config_value TEXT NOT NULL,
+        config_type TEXT DEFAULT 'string' CHECK(config_type IN ('string', 'number', 'boolean', 'json', 'array')),
+        category TEXT DEFAULT 'general',
+        description TEXT,
+        is_public BOOLEAN DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS indicators (
+        id TEXT PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        category TEXT NOT NULL CHECK(category IN ('compliance', 'capacity', 'enforcement', 'responsiveness', 'innovation', 'other')),
+        weight REAL DEFAULT 0 CHECK(weight >= 0 AND weight <= 100),
+        max_score REAL DEFAULT 100,
+        scoring_method TEXT DEFAULT 'sum' CHECK(scoring_method IN ('sum', 'average', 'weighted', 'formula', 'conditional', 'manual')),
+        formula TEXT,
+        parameters TEXT NOT NULL DEFAULT '[]',
+        scoring_rules TEXT NOT NULL DEFAULT '[]',
+        ui_config TEXT DEFAULT '{}',
+        is_active BOOLEAN DEFAULT 1,
+        display_order INTEGER DEFAULT 0,
+        version INTEGER DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS form_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        template_type TEXT NOT NULL CHECK(template_type IN ('assessment', 'report', 'data_collection', 'custom')),
+        indicator_ids TEXT DEFAULT '[]',
+        sections TEXT NOT NULL DEFAULT '[]',
+        validation_rules TEXT DEFAULT '{}',
+        ui_config TEXT DEFAULT '{}',
+        version TEXT DEFAULT '1.0',
+        is_active BOOLEAN DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    await runAsync(sqlite, `
+      CREATE TABLE IF NOT EXISTS configuration_versions (
+        id TEXT PRIMARY KEY,
+        version_name TEXT NOT NULL,
+        version_number TEXT UNIQUE NOT NULL,
+        description TEXT,
+        indicators TEXT NOT NULL DEFAULT '[]',
+        form_templates TEXT NOT NULL DEFAULT '[]',
+        system_config TEXT NOT NULL DEFAULT '{}',
+        is_active BOOLEAN DEFAULT 0,
+        applied_at DATETIME,
+        applied_by TEXT,
+        created_by TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+  }
   
   console.log('✅ All database tables created/verified successfully');
 }
 
 // ============================================================================
-// SEED DEFAULT DATA EXACTLY FROM AIMS GUIDELINE (SEPTEMBER 2025)
+// SEED DEFAULT DATA (PostgreSQL compatible)
 // ============================================================================
 async function initializeDefaultData() {
-  const database = getDB();
+  const db = getDB();
+  const isPG = db instanceof Pool;
+  
   console.log('\n🌱 SEEDING DEFAULT AIMS DATA FROM OFFICIAL GUIDELINE (Sept 2025)');
   
   try {
     // ==================== DEFAULT ADMIN USER ====================
-    const userCount = await getAsync<{ count: number }>(database, 'SELECT COUNT(*) as count FROM users');
+    const userCount = await getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM users');
     if (userCount?.count === 0) {
       const hashedPassword = await bcrypt.hash('admin123', 10);
-      await runAsync(database, `
+      await runAsync(db, `
         INSERT INTO users (id, name, email, password_hash, role, is_active)
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5, $6)
       `, [
         crypto.randomUUID(),
         'System Administrator',
         'admin@acc.gov',
         hashedPassword,
         'system_admin',
-        1
+        isPG ? true : 1
       ]);
       console.log('✅ Created admin user: admin@acc.gov / admin123');
     }
 
     // ==================== DEFAULT SYSTEM CONFIG ====================
-    const configCount = await getAsync<{ count: number }>(database, 'SELECT COUNT(*) as count FROM system_config');
+    const configCount = await getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM system_config');
     if (configCount?.count === 0) {
       const configs = [
         { key: 'system.version', value: '2.0.0', type: 'string', category: 'system', description: 'System version' },
@@ -325,466 +625,318 @@ async function initializeDefaultData() {
       ];
       
       for (const config of configs) {
-        await runAsync(database, `
-          INSERT INTO system_config (config_key, config_value, config_type, category, description)
-          VALUES (?, ?, ?, ?, ?)
-        `, [config.key, config.value, config.type, config.category, config.description]);
+        if (isPG) {
+          await runAsync(db, `
+            INSERT INTO system_config (config_key, config_value, config_type, category, description)
+            VALUES ($1, $2, $3, $4, $5)
+          `, [config.key, config.value, config.type, config.category, config.description]);
+        } else {
+          await runAsync(db, `
+            INSERT INTO system_config (config_key, config_value, config_type, category, description)
+            VALUES (?, ?, ?, ?, ?)
+          `, [config.key, config.value, config.type, config.category, config.description]);
+        }
       }
       console.log('✅ Created system configuration');
     }
 
-    // ==================== SEED 5 AIMS INDICATORS EXACTLY FROM GUIDELINE ====================
-    const indicatorCount = await getAsync<{ count: number }>(database, 'SELECT COUNT(*) as count FROM indicators');
+    // ==================== SEED 5 AIMS INDICATORS ====================
+    const indicatorCount = await getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM indicators');
     if (indicatorCount?.count === 0) {
       console.log('\n📊 Creating 5 AIMS indicators per official guideline...');
       
-      // INDICATOR 1: ICCS (28 points)
-      await runAsync(database, `
-        INSERT INTO indicators (
-          id, code, name, description, category, weight, max_score, scoring_method,
-          parameters, scoring_rules, is_active, display_order, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        'ind_iccs',
-        'ICCS',
-        'Internal Corruption Control Systems',
-        'Functioning of agency\'s four core integrity systems',
-        'compliance',
-        28,
-        28,
-        'formula',
-        JSON.stringify([
-          {
-            id: 'complaint_exists',
-            code: 'complaint_exists',
-            label: 'Complaint Management System Exists',
-            type: 'boolean',
-            description: 'Does the complaint system exist?',
-            required: true,
-            scoringRuleIds: ['rule_iccs_complaint_exists']
-          },
-          {
-            id: 'complaint_functions',
-            code: 'complaint_functions',
-            label: 'Complaint Management System Functions',
-            type: 'boolean',
-            description: 'Does the complaint system function properly?',
-            required: true,
-            scoringRuleIds: ['rule_iccs_complaint_functioning']
-          },
-          {
-            id: 'conflict_exists',
-            code: 'conflict_exists',
-            label: 'Conflict of Interest System Exists',
-            type: 'boolean',
-            description: 'Does the conflict of interest system exist?',
-            required: true,
-            scoringRuleIds: ['rule_iccs_coi_exists']
-          },
-          {
-            id: 'conflict_functions',
-            code: 'conflict_functions',
-            label: 'Conflict of Interest System Functions',
-            type: 'boolean',
-            description: 'Does the conflict of interest system function?',
-            required: true,
-            scoringRuleIds: ['rule_iccs_coi_functioning']
-          },
-          {
-            id: 'gift_exists',
-            code: 'gift_exists',
-            label: 'Gift Register System Exists',
-            type: 'boolean',
-            description: 'Does the gift register system exist?',
-            required: true,
-            scoringRuleIds: ['rule_iccs_gift_exists']
-          },
-          {
-            id: 'gift_functions',
-            code: 'gift_functions',
-            label: 'Gift Register System Functions',
-            type: 'boolean',
-            description: 'Does the gift register system function?',
-            required: true,
-            scoringRuleIds: ['rule_iccs_gift_functioning']
-          },
-          {
-            id: 'proactive_level',
-            code: 'proactive_level',
-            label: 'Proactive Measures Level',
-            type: 'select',
-            description: 'Status of ACC recommendations implementation',
-            required: true,
-            options: [
-              { value: 'level1', label: 'Level 1: ACC Recommendations Present & Functioning (7 points)' },
-              { value: 'level2', label: 'Level 2: No Recommendations & No Proactive Measures (3 points)' },
-              { value: 'level3', label: 'Level 3: ACC Recommendations Exist But Not Implemented (0 points)' }
-            ],
-            scoringRuleIds: ['rule_acc_level1', 'rule_acc_level2', 'rule_acc_level3']
-          },
-          {
-            id: 'iccs_score',
-            code: 'iccs_score',
-            label: 'ICCS Total Score',
-            type: 'number',
-            description: 'Total score for Internal Corruption Control Systems',
-            required: true,
-            validation: { min: 0, max: 28 },
-            calculationConfig: {
-              calculationType: 'formula',
-              calculationDetails: {
-                formulaConfig: {
-                  formula: "(IF(complaint_exists, 3, 0) + IF(complaint_functions, 4, 0)) + (IF(conflict_exists, 3, 0) + IF(conflict_functions, 4, 0)) + (IF(gift_exists, 3, 0) + IF(gift_functions, 4, 0)) + CASE(proactive_level, \"level1\", 7, \"level2\", 3, \"level3\", 0)",
-                  variables: {
-                    complaint_exists: { label: "Complaint Exists", field: "complaint_exists", type: "boolean" },
-                    complaint_functions: { label: "Complaint Functions", field: "complaint_functions", type: "boolean" },
-                    conflict_exists: { label: "Conflict Exists", field: "conflict_exists", type: "boolean" },
-                    conflict_functions: { label: "Conflict Functions", field: "conflict_functions", type: "boolean" },
-                    gift_exists: { label: "Gift Exists", field: "gift_exists", type: "boolean" },
-                    gift_functions: { label: "Gift Functions", field: "gift_functions", type: "boolean" },
-                    proactive_level: { label: "Proactive Level", field: "proactive_level", type: "string" }
-                  }
-                }
-              },
-              autoCalculate: true,
-              allowManualOverride: false,
-              showCalculation: true
+      const indicators = [
+        {
+          id: 'ind_iccs',
+          code: 'ICCS',
+          name: 'Internal Corruption Control Systems',
+          description: 'Functioning of agency\'s four core integrity systems',
+          category: 'compliance',
+          weight: 28,
+          max_score: 28,
+          scoring_method: 'formula',
+          parameters: JSON.stringify([
+            {
+              id: 'complaint_exists',
+              code: 'complaint_exists',
+              label: 'Complaint Management System Exists',
+              type: 'boolean',
+              description: 'Does the complaint system exist?',
+              required: true,
+              scoringRuleIds: ['rule_iccs_complaint_exists']
             },
-            dependencies: ['complaint_exists', 'complaint_functions', 'conflict_exists', 'conflict_functions', 'gift_exists', 'gift_functions', 'proactive_level']
-          }
-        ]),
-        JSON.stringify([
-          { id: 'rule_iccs_complaint_exists', parameterCode: 'complaint_exists', condition: 'true', points: 3, description: 'Complaint system exists' },
-          { id: 'rule_iccs_complaint_functioning', parameterCode: 'complaint_functions', condition: 'true', points: 4, description: 'Complaint system functions' },
-          { id: 'rule_iccs_coi_exists', parameterCode: 'conflict_exists', condition: 'true', points: 3, description: 'Conflict system exists' },
-          { id: 'rule_iccs_coi_functioning', parameterCode: 'conflict_functions', condition: 'true', points: 4, description: 'Conflict system functions' },
-          { id: 'rule_iccs_gift_exists', parameterCode: 'gift_exists', condition: 'true', points: 3, description: 'Gift register exists' },
-          { id: 'rule_iccs_gift_functioning', parameterCode: 'gift_functions', condition: 'true', points: 4, description: 'Gift register functions' },
-          { id: 'rule_acc_level1', parameterCode: 'proactive_level', condition: 'level1', points: 7, description: 'ACC Recommendations Present & Functioning' },
-          { id: 'rule_acc_level2', parameterCode: 'proactive_level', condition: 'level2', points: 3, description: 'No Recommendations & No Proactive Measures' },
-          { id: 'rule_acc_level3', parameterCode: 'proactive_level', condition: 'level3', points: 0, description: 'ACC Recommendations Exist But Not Implemented' }
-        ]),
-        1,
-        1,
-        'system',
-        'system'
-      ]);
-      console.log('✅ Created Indicator 1: ICCS (28 points)');
-
-      // INDICATOR 2: Training (26 points)
-      await runAsync(database, `
-        INSERT INTO indicators (
-          id, code, name, description, category, weight, max_score, scoring_method,
-          parameters, scoring_rules, is_active, display_order, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        'ind_training',
-        'TRAINING',
-        'Integrity Capacity Building',
-        'Staff training and e-learning completion',
-        'capacity',
-        26,
-        26,
-        'conditional',
-        JSON.stringify([
-          {
-            id: 'total_employees',
-            code: 'total_employees',
-            label: 'Total Employees',
-            type: 'number',
-            description: 'Total number of employees in the agency',
-            required: true,
-            validation: { min: 1 }
-          },
-          {
-            id: 'completed_employees',
-            code: 'completed_employees',
-            label: 'Completed Employees',
-            type: 'number',
-            description: 'Number of employees who completed ACC e-learning',
-            required: true,
-            validation: { min: 0 }
-          },
-          {
-            id: 'completion_rate',
-            code: 'completion_rate',
-            label: 'Training Completion Rate',
-            type: 'percentage',
-            description: '% of employees completing ACC e-learning',
-            required: true,
-            validation: { min: 0, max: 100 },
-            calculationConfig: {
-              calculationType: 'percentage',
-              calculationDetails: {
-                percentageConfig: {
-                  numeratorField: 'completed_employees',
-                  denominatorField: 'total_employees',
-                  numeratorLabel: 'Completed Employees',
-                  denominatorLabel: 'Total Employees',
-                  unit: 'employees',
-                  precision: 2
-                }
-              },
-              autoCalculate: true,
-              allowManualOverride: false,
-              showCalculation: true,
-              validationRules: { requireBothFields: true, minDenominator: 1, maxNumeratorRatio: 1.0 }
+            {
+              id: 'complaint_functions',
+              code: 'complaint_functions',
+              label: 'Complaint Management System Functions',
+              type: 'boolean',
+              description: 'Does the complaint system function properly?',
+              required: true,
+              scoringRuleIds: ['rule_iccs_complaint_functioning']
             },
-            dependencies: ['completed_employees', 'total_employees']
-          }
-        ]),
-        JSON.stringify([
-          { minPercentage: 85, points: 26, label: '≥85% → 26 points (Excellent)' },
-          { minPercentage: 70, maxPercentage: 84, points: 18, label: '70-84% → 18 points (Good)' },
-          { minPercentage: 50, maxPercentage: 69, points: 10, label: '50-69% → 10 points (Fair)' },
-          { minPercentage: 0, maxPercentage: 49, points: 0, label: '<50% → 0 points (Needs Improvement)' }
-        ]),
-        1,
-        2,
-        'system',
-        'system'
-      ]);
-      console.log('✅ Created Indicator 2: Training (26 points)');
-
-      // INDICATOR 3: AD (16 points)
-      await runAsync(database, `
-        INSERT INTO indicators (
-          id, code, name, description, category, weight, max_score, scoring_method,
-          parameters, scoring_rules, is_active, display_order, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        'ind_ad',
-        'AD',
-        'Asset Declaration Compliance',
-        'Asset declaration submission compliance',
-        'compliance',
-        16,
-        16,
-        'conditional',
-        JSON.stringify([
-          {
-            id: 'total_covered_officials',
-            code: 'total_covered_officials',
-            label: 'Total Covered Officials',
-            type: 'number',
-            description: 'Total number of officials required to submit Asset Declarations',
-            required: true,
-            validation: { min: 1 }
-          },
-          {
-            id: 'officials_submitted_on_time',
-            code: 'officials_submitted_on_time',
-            label: 'Officials Submitted On Time',
-            type: 'number',
-            description: 'Number of officials who submitted Asset Declarations on time',
-            required: true,
-            validation: { min: 0 }
-          },
-          {
-            id: 'submission_rate',
-            code: 'submission_rate',
-            label: 'AD Submission Rate',
-            type: 'percentage',
-            description: '% of covered officials submitting AD on time',
-            required: true,
-            validation: { min: 0, max: 100 },
-            calculationConfig: {
-              calculationType: 'percentage',
-              calculationDetails: {
-                percentageConfig: {
-                  numeratorField: 'officials_submitted_on_time',
-                  denominatorField: 'total_covered_officials',
-                  numeratorLabel: 'Officials Submitted On Time',
-                  denominatorLabel: 'Total Covered Officials',
-                  unit: 'officials',
-                  precision: 2
-                }
-              },
-              autoCalculate: true,
-              allowManualOverride: false,
-              showCalculation: true,
-              validationRules: { requireBothFields: true, minDenominator: 1, maxNumeratorRatio: 1.0 }
+            {
+              id: 'conflict_exists',
+              code: 'conflict_exists',
+              label: 'Conflict of Interest System Exists',
+              type: 'boolean',
+              description: 'Does the conflict of interest system exist?',
+              required: true,
+              scoringRuleIds: ['rule_iccs_coi_exists']
             },
-            dependencies: ['officials_submitted_on_time', 'total_covered_officials']
-          }
-        ]),
-        JSON.stringify([
-          { condition: '=100', points: 16, label: '100% → 16 points (Perfect)' },
-          { condition: '>=95', points: 10, label: '95-99% → 10 points (Very Good)' },
-          { condition: '>=90', points: 5, label: '90-94% → 5 points (Good)' },
-          { condition: '<90', points: 0, label: '<90% → 0 points (Needs Improvement)' }
-        ]),
-        1,
-        3,
-        'system',
-        'system'
-      ]);
-      console.log('✅ Created Indicator 3: AD (16 points)');
-
-      // INDICATOR 4: Cases (20 points)
-      await runAsync(database, `
-        INSERT INTO indicators (
-          id, code, name, description, category, weight, max_score, scoring_method,
-          parameters, scoring_rules, is_active, display_order, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        'ind_cases',
-        'CASES',
-        'Corruption Case Severity & Resolution',
-        'Weighted severity of corruption cases involving agency staff',
-        'enforcement',
-        20,
-        20,
-        'weighted',
-        JSON.stringify([
-          {
-            id: 'convictions',
-            code: 'convictions',
-            label: 'Convictions',
-            type: 'number',
-            description: 'Number of convictions in the Fiscal Year',
-            required: false,
-            weight: 3,
-            validation: { min: 0 }
-          },
-          {
-            id: 'prosecutions',
-            code: 'prosecutions',
-            label: 'Prosecutions/OAG Referrals',
-            type: 'number',
-            description: 'Number of prosecutions or OAG referrals',
-            required: false,
-            weight: 2,
-            validation: { min: 0 }
-          },
-          {
-            id: 'admin_actions',
-            code: 'admin_actions',
-            label: 'Administrative Actions',
-            type: 'number',
-            description: 'Number of ACC-confirmed administrative actions',
-            required: false,
-            weight: 1,
-            validation: { min: 0 }
-          },
-          {
-            id: 'weighted_sum',
-            code: 'weighted_sum',
-            label: 'Weighted Severity Score',
-            type: 'number',
-            description: 'Calculated: (Convictions×3) + (Prosecutions×2) + (Admin Actions×1)',
-            required: true,
-            validation: { min: 0 },
-            calculationConfig: {
-              calculationType: 'weighted_sum',
-              calculationDetails: {
-                weightedSumConfig: {
-                  caseTypes: [
-                    { type: 'Conviction', weight: 3, label: 'Number of Conviction Cases', field: 'convictions' },
-                    { type: 'Prosecution', weight: 2, label: 'Number of Prosecution Cases', field: 'prosecutions' },
-                    { type: 'Administrative Action', weight: 1, label: 'Number of Administrative Actions', field: 'admin_actions' }
-                  ]
-                }
-              },
-              autoCalculate: true,
-              allowManualOverride: false,
-              showCalculation: true
+            {
+              id: 'conflict_functions',
+              code: 'conflict_functions',
+              label: 'Conflict of Interest System Functions',
+              type: 'boolean',
+              description: 'Does the conflict of interest system function?',
+              required: true,
+              scoringRuleIds: ['rule_iccs_coi_functioning']
             },
-            dependencies: ['convictions', 'prosecutions', 'admin_actions']
-          }
-        ]),
-        JSON.stringify([
-          { range: '=0', points: 20, label: '0 cases → 20 points (Excellent)' },
-          { range: '1-2', points: 10, label: '1-2 cases → 10 points (Good)' },
-          { range: '3-4', points: 5, label: '3-4 cases → 5 points (Fair)' },
-          { range: '>=5', points: 0, label: '≥5 cases → 0 points (Poor)' }
-        ]),
-        1,
-        4,
-        'system',
-        'system'
-      ]);
-      console.log('✅ Created Indicator 4: Cases (20 points)');
-
-      // INDICATOR 5: ATR (10 points)
-      await runAsync(database, `
-        INSERT INTO indicators (
-          id, code, name, description, category, weight, max_score, scoring_method,
-          parameters, scoring_rules, is_active, display_order, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        'ind_atr',
-        'ATR',
-        'ATR Responsiveness',
-        'Timeliness of Action Taken Report submissions',
-        'responsiveness',
-        10,
-        10,
-        'conditional',
-        JSON.stringify([
-          {
-            id: 'total_atrs',
-            code: 'total_atrs',
-            label: 'Total ATRs',
-            type: 'number',
-            description: 'Total number of ATRs (Action Taken Reports) requested',
-            required: true,
-            validation: { min: 1 }
-          },
-          {
-            id: 'atrs_submitted_on_time',
-            code: 'atrs_submitted_on_time',
-            label: 'ATRs Submitted On Time',
-            type: 'number',
-            description: 'Number of ATRs submitted within ACC deadlines',
-            required: true,
-            validation: { min: 0 }
-          },
-          {
-            id: 'timeliness_rate',
-            code: 'timeliness_rate',
-            label: 'ATR Timeliness Rate',
-            type: 'percentage',
-            description: "% of ATRs submitted within ACC's deadlines",
-            required: true,
-            validation: { min: 0, max: 100 },
-            calculationConfig: {
-              calculationType: 'percentage',
-              calculationDetails: {
-                percentageConfig: {
-                  numeratorField: 'atrs_submitted_on_time',
-                  denominatorField: 'total_atrs',
-                  numeratorLabel: 'ATRs Submitted On Time',
-                  denominatorLabel: 'Total ATRs',
-                  unit: 'ATRs',
-                  precision: 2
-                }
-              },
-              autoCalculate: true,
-              allowManualOverride: false,
-              showCalculation: true,
-              validationRules: { requireBothFields: true, minDenominator: 1, maxNumeratorRatio: 1.0 }
+            {
+              id: 'gift_exists',
+              code: 'gift_exists',
+              label: 'Gift Register System Exists',
+              type: 'boolean',
+              description: 'Does the gift register system exist?',
+              required: true,
+              scoringRuleIds: ['rule_iccs_gift_exists']
             },
-            dependencies: ['atrs_submitted_on_time', 'total_atrs']
-          }
-        ]),
-        JSON.stringify([
-          { condition: '>=90', points: 10, label: '≥90% → 10 points (Excellent)' },
-          { condition: '>=70', points: 7, label: '70-89% → 7 points (Satisfactory)' },
-          { condition: '<70', points: 3, label: '<70% → 3 points (Needs Improvement)' }
-        ]),
-        1,
-        5,
-        'system',
-        'system'
-      ]);
-      console.log('✅ Created Indicator 5: ATR (10 points)');
-
+            {
+              id: 'gift_functions',
+              code: 'gift_functions',
+              label: 'Gift Register System Functions',
+              type: 'boolean',
+              description: 'Does the gift register system function?',
+              required: true,
+              scoringRuleIds: ['rule_iccs_gift_functioning']
+            },
+            {
+              id: 'proactive_level',
+              code: 'proactive_level',
+              label: 'Proactive Measures Level',
+              type: 'select',
+              description: 'Status of ACC recommendations implementation',
+              required: true,
+              options: [
+                { value: 'level1', label: 'Level 1: ACC Recommendations Present & Functioning (7 points)' },
+                { value: 'level2', label: 'Level 2: No Recommendations & No Proactive Measures (3 points)' },
+                { value: 'level3', label: 'Level 3: ACC Recommendations Exist But Not Implemented (0 points)' }
+              ],
+              scoringRuleIds: ['rule_acc_level1', 'rule_acc_level2', 'rule_acc_level3']
+            }
+          ]),
+          scoring_rules: JSON.stringify([
+            { id: 'rule_iccs_complaint_exists', parameterCode: 'complaint_exists', condition: 'true', points: 3, description: 'Complaint system exists' },
+            { id: 'rule_iccs_complaint_functioning', parameterCode: 'complaint_functions', condition: 'true', points: 4, description: 'Complaint system functions' },
+            { id: 'rule_iccs_coi_exists', parameterCode: 'conflict_exists', condition: 'true', points: 3, description: 'Conflict system exists' },
+            { id: 'rule_iccs_coi_functioning', parameterCode: 'conflict_functions', condition: 'true', points: 4, description: 'Conflict system functions' },
+            { id: 'rule_iccs_gift_exists', parameterCode: 'gift_exists', condition: 'true', points: 3, description: 'Gift register exists' },
+            { id: 'rule_iccs_gift_functioning', parameterCode: 'gift_functions', condition: 'true', points: 4, description: 'Gift register functions' },
+            { id: 'rule_acc_level1', parameterCode: 'proactive_level', condition: 'level1', points: 7, description: 'ACC Recommendations Present & Functioning' },
+            { id: 'rule_acc_level2', parameterCode: 'proactive_level', condition: 'level2', points: 3, description: 'No Recommendations & No Proactive Measures' },
+            { id: 'rule_acc_level3', parameterCode: 'proactive_level', condition: 'level3', points: 0, description: 'ACC Recommendations Exist But Not Implemented' }
+          ]),
+          is_active: isPG ? true : 1,
+          display_order: 1
+        },
+        {
+          id: 'ind_training',
+          code: 'TRAINING',
+          name: 'Integrity Capacity Building',
+          description: 'Staff training and e-learning completion',
+          category: 'capacity',
+          weight: 26,
+          max_score: 26,
+          scoring_method: 'conditional',
+          parameters: JSON.stringify([
+            {
+              id: 'total_employees',
+              code: 'total_employees',
+              label: 'Total Employees',
+              type: 'number',
+              description: 'Total number of employees in the agency',
+              required: true,
+              validation: { min: 1 }
+            },
+            {
+              id: 'completed_employees',
+              code: 'completed_employees',
+              label: 'Completed Employees',
+              type: 'number',
+              description: 'Number of employees who completed ACC e-learning',
+              required: true,
+              validation: { min: 0 }
+            }
+          ]),
+          scoring_rules: JSON.stringify([
+            { minPercentage: 85, points: 26, label: '≥85% → 26 points (Excellent)' },
+            { minPercentage: 70, maxPercentage: 84, points: 18, label: '70-84% → 18 points (Good)' },
+            { minPercentage: 50, maxPercentage: 69, points: 10, label: '50-69% → 10 points (Fair)' },
+            { minPercentage: 0, maxPercentage: 49, points: 0, label: '<50% → 0 points (Needs Improvement)' }
+          ]),
+          is_active: isPG ? true : 1,
+          display_order: 2
+        },
+        {
+          id: 'ind_ad',
+          code: 'AD',
+          name: 'Asset Declaration Compliance',
+          description: 'Asset declaration submission compliance',
+          category: 'compliance',
+          weight: 16,
+          max_score: 16,
+          scoring_method: 'conditional',
+          parameters: JSON.stringify([
+            {
+              id: 'total_covered_officials',
+              code: 'total_covered_officials',
+              label: 'Total Covered Officials',
+              type: 'number',
+              description: 'Total number of officials required to submit Asset Declarations',
+              required: true,
+              validation: { min: 1 }
+            },
+            {
+              id: 'officials_submitted_on_time',
+              code: 'officials_submitted_on_time',
+              label: 'Officials Submitted On Time',
+              type: 'number',
+              description: 'Number of officials who submitted Asset Declarations on time',
+              required: true,
+              validation: { min: 0 }
+            }
+          ]),
+          scoring_rules: JSON.stringify([
+            { condition: '=100', points: 16, label: '100% → 16 points (Perfect)' },
+            { condition: '>=95', points: 10, label: '95-99% → 10 points (Very Good)' },
+            { condition: '>=90', points: 5, label: '90-94% → 5 points (Good)' },
+            { condition: '<90', points: 0, label: '<90% → 0 points (Needs Improvement)' }
+          ]),
+          is_active: isPG ? true : 1,
+          display_order: 3
+        },
+        {
+          id: 'ind_cases',
+          code: 'CASES',
+          name: 'Corruption Case Severity & Resolution',
+          description: 'Weighted severity of corruption cases involving agency staff',
+          category: 'enforcement',
+          weight: 20,
+          max_score: 20,
+          scoring_method: 'weighted',
+          parameters: JSON.stringify([
+            {
+              id: 'convictions',
+              code: 'convictions',
+              label: 'Convictions',
+              type: 'number',
+              description: 'Number of convictions in the Fiscal Year',
+              required: false,
+              weight: 3,
+              validation: { min: 0 }
+            },
+            {
+              id: 'prosecutions',
+              code: 'prosecutions',
+              label: 'Prosecutions/OAG Referrals',
+              type: 'number',
+              description: 'Number of prosecutions or OAG referrals',
+              required: false,
+              weight: 2,
+              validation: { min: 0 }
+            },
+            {
+              id: 'admin_actions',
+              code: 'admin_actions',
+              label: 'Administrative Actions',
+              type: 'number',
+              description: 'Number of ACC-confirmed administrative actions',
+              required: false,
+              weight: 1,
+              validation: { min: 0 }
+            }
+          ]),
+          scoring_rules: JSON.stringify([
+            { range: '=0', points: 20, label: '0 cases → 20 points (Excellent)' },
+            { range: '1-2', points: 10, label: '1-2 cases → 10 points (Good)' },
+            { range: '3-4', points: 5, label: '3-4 cases → 5 points (Fair)' },
+            { range: '>=5', points: 0, label: '≥5 cases → 0 points (Poor)' }
+          ]),
+          is_active: isPG ? true : 1,
+          display_order: 4
+        },
+        {
+          id: 'ind_atr',
+          code: 'ATR',
+          name: 'ATR Responsiveness',
+          description: 'Timeliness of Action Taken Report submissions',
+          category: 'responsiveness',
+          weight: 10,
+          max_score: 10,
+          scoring_method: 'conditional',
+          parameters: JSON.stringify([
+            {
+              id: 'total_atrs',
+              code: 'total_atrs',
+              label: 'Total ATRs',
+              type: 'number',
+              description: 'Total number of ATRs (Action Taken Reports) requested',
+              required: true,
+              validation: { min: 1 }
+            },
+            {
+              id: 'atrs_submitted_on_time',
+              code: 'atrs_submitted_on_time',
+              label: 'ATRs Submitted On Time',
+              type: 'number',
+              description: 'Number of ATRs submitted within ACC deadlines',
+              required: true,
+              validation: { min: 0 }
+            }
+          ]),
+          scoring_rules: JSON.stringify([
+            { condition: '>=90', points: 10, label: '≥90% → 10 points (Excellent)' },
+            { condition: '>=70', points: 7, label: '70-89% → 7 points (Satisfactory)' },
+            { condition: '<70', points: 3, label: '<70% → 3 points (Needs Improvement)' }
+          ]),
+          is_active: isPG ? true : 1,
+          display_order: 5
+        }
+      ];
+      
+      for (const indicator of indicators) {
+        if (isPG) {
+          await runAsync(db, `
+            INSERT INTO indicators (
+              id, code, name, description, category, weight, max_score, scoring_method,
+              parameters, scoring_rules, is_active, display_order, created_by, updated_by
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          `, [
+            indicator.id, indicator.code, indicator.name, indicator.description,
+            indicator.category, indicator.weight, indicator.max_score, indicator.scoring_method,
+            indicator.parameters, indicator.scoring_rules, indicator.is_active,
+            indicator.display_order, 'system', 'system'
+          ]);
+        } else {
+          await runAsync(db, `
+            INSERT INTO indicators (
+              id, code, name, description, category, weight, max_score, scoring_method,
+              parameters, scoring_rules, is_active, display_order, created_by, updated_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            indicator.id, indicator.code, indicator.name, indicator.description,
+            indicator.category, indicator.weight, indicator.max_score, indicator.scoring_method,
+            indicator.parameters, indicator.scoring_rules, indicator.is_active,
+            indicator.display_order, 'system', 'system'
+          ]);
+        }
+      }
+      
       console.log('✅ Created all 5 AIMS indicators with parameters and scoring rules');
     }
 
     // ==================== SEED AIMS ASSESSMENT FORM TEMPLATE ====================
-    const templateCount = await getAsync<{ count: number }>(database, 'SELECT COUNT(*) as count FROM form_templates');
+    const templateCount = await getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM form_templates');
     if (templateCount?.count === 0) {
       console.log('\n📝 Creating AIMS Assessment Form Template...');
       
@@ -870,31 +1022,52 @@ async function initializeDefaultData() {
           }
         ]),
         version: '1.0.0',
-        is_active: true,
+        is_active: isPG ? true : 1,
         created_by: 'system',
         updated_by: 'system',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
       
-      await runAsync(database, `
-        INSERT INTO form_templates (
-          id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        template.id,
-        template.name,
-        template.description,
-        template.template_type,
-        template.indicator_ids,
-        template.sections,
-        template.version,
-        template.is_active,
-        template.created_by,
-        template.updated_by,
-        template.created_at,
-        template.updated_at
-      ]);
+      if (isPG) {
+        await runAsync(db, `
+          INSERT INTO form_templates (
+            id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [
+          template.id,
+          template.name,
+          template.description,
+          template.template_type,
+          template.indicator_ids,
+          template.sections,
+          template.version,
+          template.is_active,
+          template.created_by,
+          template.updated_by,
+          template.created_at,
+          template.updated_at
+        ]);
+      } else {
+        await runAsync(db, `
+          INSERT INTO form_templates (
+            id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          template.id,
+          template.name,
+          template.description,
+          template.template_type,
+          template.indicator_ids,
+          template.sections,
+          template.version,
+          template.is_active,
+          template.created_by,
+          template.updated_by,
+          template.created_at,
+          template.updated_at
+        ]);
+      }
       
       console.log('✅ Created AIMS Assessment Form Template');
     }
@@ -909,12 +1082,20 @@ async function initializeDefaultData() {
   }
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return 'Unknown error occurred';
+}
+
 // ============================================================================
-// DATABASE INITIALIZATION (GUARANTEED TO RUN ON STARTUP)
+// DATABASE INITIALIZATION
 // ============================================================================
 export async function initializeDatabase() {
   try {
     console.log('\n🚀 Initializing AIMS Database...');
+    console.log(`📊 Database type: ${usePostgres ? 'PostgreSQL' : 'SQLite'}`);
+    
     await createTables();
     await initializeDefaultData();
     
@@ -935,7 +1116,6 @@ export async function initializeDatabase() {
     if (counts.indicators === 5 && counts.templates === 1 && counts.users === 1) {
       console.log('\n✨ READY FOR AIMS ASSESSMENT TESTING!');
       console.log('✅ Default admin: admin@acc.gov / admin123');
-      console.log('✅ Access ConfigPage to test forms');
     } else {
       console.warn('\n⚠️ WARNING: Seeded data counts don\'t match expectations!');
       console.warn('   Please check console logs for errors during seeding');
@@ -955,5 +1135,6 @@ export default {
   getAsync,
   allAsync,
   createTables,
-  initializeDatabase
+  initializeDatabase,
+  isUsingPostgres
 };

@@ -57,6 +57,11 @@ const app = express();
     console.log('✅ Default data initialized');
   } catch (err) {
     console.error('❌ DB initialization failed:', err);
+    // Don't exit on error in development, but do in production
+    if (process.env.NODE_ENV === 'production') {
+      console.error('🚨 Production database initialization failed. Exiting...');
+      process.exit(1);
+    }
   }
 })();
 
@@ -88,33 +93,68 @@ app.use(cookieParser());
 app.use(express.json());
 
 /* -------------------- Session -------------------- */
-const SQLiteStore = require('connect-sqlite3')(session);
-
-app.use(
-  session({
-    name: 'aims.sid',
-    secret: process.env.SESSION_SECRET || 'dev-secret-aim-system-2026',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000,
-    },
-    store: new SQLiteStore({
-      db: 'sessions.db',
-      dir: './',
-    }),
-  })
-);
+// Use different session stores based on environment
+if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
+  // Production: Use PostgreSQL session store
+  const pgSession = require('connect-pg-simple')(session);
+  const { Pool } = require('pg');
+  
+  const pgPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+  
+  app.use(
+    session({
+      name: 'aims.sid',
+      secret: process.env.SESSION_SECRET || 'dev-secret-aim-system-2026',
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000,
+      },
+      store: new pgSession({
+        pool: pgPool,
+        tableName: 'session',
+        createTableIfMissing: true
+      })
+    })
+  );
+} else {
+  // Development: Use SQLite session store
+  const SQLiteStore = require('connect-sqlite3')(session);
+  
+  app.use(
+    session({
+      name: 'aims.sid',
+      secret: process.env.SESSION_SECRET || 'dev-secret-aim-system-2026',
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000,
+      },
+      store: new SQLiteStore({
+        db: 'sessions.db',
+        dir: './',
+      }),
+    })
+  );
+}
 
 /* -------------------- Attach session user -------------------- */
 app.use(attachSessionUser);
 
 /* -------------------- Debug Logger -------------------- */
 app.use((req, _res, next) => {
-  console.log('🔍', req.method, req.path);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('🔍', req.method, req.path);
+  }
   next();
 });
 
@@ -193,6 +233,7 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📊 Database mode: ${process.env.NODE_ENV === 'production' ? 'PostgreSQL' : 'SQLite'}`);
 });
 
 export default app;

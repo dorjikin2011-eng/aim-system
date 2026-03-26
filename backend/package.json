@@ -22,6 +22,7 @@
     "multer": "^2.0.2",
     "nodemailer": "^7.0.12",
     "pg": "^8.20.0",
+    "connect-pg-simple": "^9.0.0",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
     "uuid": "^13.0.0"
