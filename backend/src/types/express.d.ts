@@ -1,15 +1,20 @@
 // backend/src/types/express.d.ts
 
-import { UserRole } from '../models/user'; // adjust path if needed
-
-// Use module augmentation to extend Express types
-declare module 'express-serve-static-core' {
-  interface Request {
-    user?: {
-      id: string;
-      email: string;
-      role: UserRole;
-      agency_id: string | null;
-    };
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        email: string;
+        name: string;
+        role: string;
+        agency_id?: string | null;
+        department?: string;
+        phone?: string;
+        profile_image?: string;
+      };
+    }
   }
 }
+
+export {};
