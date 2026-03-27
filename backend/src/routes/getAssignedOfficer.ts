@@ -1,19 +1,21 @@
 // backend/src/routes/getAssignedOfficer.ts
 
-import { Router } from 'express';
+import { Router, Request } from 'express';
 import { getAssignedOfficer } from '../controllers/agencyDataController';
 import { requireAuth, requireRole } from '../middleware/auth';
-import { User } from '../types';
-
-declare global {
-  namespace Express {
-    interface Request {
-      user?: User;
-    }
-  }
-}
 
 const router = Router();
+
+// Extend Express Request type locally to match your middleware
+declare module 'express-serve-static-core' {
+  interface Request {
+    user?: {
+      id: string;
+      email: string;
+      role: string;
+    };
+  }
+}
 
 // Apply authentication and role middleware
 router.use(requireAuth);
