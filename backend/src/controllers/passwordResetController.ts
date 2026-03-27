@@ -1,11 +1,48 @@
-// /backend/src/controllers/passwordResetController.ts
+// backend/src/controllers/passwordResetController.ts
 import { Request, Response } from 'express';
+import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 import crypto from 'crypto';
-import * as bcrypt from 'bcryptjs'; // ✅ ADD THIS - same as authController
-import { getDB } from '../models/db';
+import * as bcrypt from 'bcryptjs';
 import { sendEmail } from '../services/emailService';
 
+// ============================================
+// Helper function to get frontend URL based on environment
+// ============================================
+const getFrontendUrl = (): string => {
+  // Use environment variable if set (production Vercel URL)
+  if (process.env.FRONTEND_URL) {
+    console.log(`📧 Using FRONTEND_URL from env: ${process.env.FRONTEND_URL}`);
+    return process.env.FRONTEND_URL;
+  }
+  
+  // Development fallback
+  if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+    console.log('📧 Using localhost for development');
+    return 'http://localhost:5173';
+  }
+  
+  // Production fallback (should not happen if env is set)
+  console.warn('⚠️ FRONTEND_URL not set, using production default');
+  return 'https://frontend-alpha-nine-65.vercel.app';
+};
+
+// ============================================
+// Hash password function using bcrypt
+// ============================================
+const hashPassword = async (password: string): Promise<string> => {
+  try {
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    return hashedPassword;
+  } catch (error) {
+    console.error('Password hashing error:', error);
+    throw new Error('Failed to hash password');
+  }
+};
+
+// ============================================
 // Request password reset
+// ============================================
 export const forgotPassword = async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
@@ -17,20 +54,11 @@ export const forgotPassword = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Check if user exists
-    const user = await new Promise<any>((resolve, reject) => {
-      db.get(
-        'SELECT id, email, name FROM users WHERE email = ?',
-        [email],
-        (err, row) => {
-          if (err) {
-            console.error('Database error:', err);
-            reject(err);
-          } else {
-            resolve(row);
-          }
-        }
-      );
-    });
+    const user = await getAsync<any>(
+      db, 
+      'SELECT id, email, name FROM users WHERE email = ?',
+      [email]
+    );
 
     // For security, don't reveal if user exists
     if (!user) {
@@ -50,48 +78,39 @@ export const forgotPassword = async (req: Request, res: Response) => {
 
     // Save token to database
     try {
-      await new Promise<void>((resolve, reject) => {
-        db.run(
-          `UPDATE users 
-           SET password_reset_token = ?, password_reset_expires = ? 
-           WHERE id = ?`,
-          [resetToken, resetExpires.toISOString(), user.id],
-          (err) => {
-            if (err) {
-              console.error('Database update error:', err);
-              reject(err);
-            } else {
-              console.log('Token saved to database for user:', user.id);
-              resolve();
-            }
-          }
-        );
-      });
+      await runAsync(db, 
+        `UPDATE users 
+         SET password_reset_token = ?, password_reset_expires = ? 
+         WHERE id = ?`,
+        [resetToken, resetExpires.toISOString(), user.id]
+      );
+      console.log('Token saved to database for user:', user.id);
     } catch (dbError) {
       console.error('Failed to save token to database:', dbError);
-      // Check if columns exist
-      console.log('Checking if password_reset_token column exists...');
-      const columns = await new Promise<any[]>((resolve, reject) => {
-        db.all("PRAGMA table_info(users)", (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        });
-      });
-      const columnNames = columns.map(col => col.name);
-      console.log('Available columns:', columnNames);
       
-      if (!columnNames.includes('password_reset_token')) {
-        return res.status(500).json({ 
-          error: 'Database configuration error. Please contact administrator.' 
-        });
+      // Check if columns exist (for debugging)
+      try {
+        const columns = await allAsync<any[]>(db, "PRAGMA table_info(users)", []);
+        const columnNames = columns.map(col => col.name);
+        console.log('Available columns:', columnNames);
+        
+        if (!columnNames.includes('password_reset_token')) {
+          return res.status(500).json({ 
+            error: 'Database configuration error. Please contact administrator.' 
+          });
+        }
+      } catch (schemaError) {
+        console.error('Error checking schema:', schemaError);
       }
     }
 
-    // Create reset URL
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    // Create reset URL with dynamic frontend URL
+    const frontendUrl = getFrontendUrl();
     const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
     
-    console.log('Reset URL:', resetUrl);
+    console.log('📧 Environment:', process.env.NODE_ENV || 'development');
+    console.log('📧 Frontend URL:', frontendUrl);
+    console.log('📧 Reset URL:', resetUrl);
 
     // Send email
     try {
@@ -130,7 +149,6 @@ export const forgotPassword = async (req: Request, res: Response) => {
     } catch (emailError) {
       console.error('Email sending error:', emailError);
       // Don't fail the request if email fails
-      // In production, you might want to queue the email
     }
 
     res.json({ 
@@ -145,7 +163,9 @@ export const forgotPassword = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // Validate reset token
+// ============================================
 export const validateResetToken = async (req: Request, res: Response) => {
   try {
     const { token } = req.params;
@@ -157,23 +177,14 @@ export const validateResetToken = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Check if token is valid and not expired
-    const user = await new Promise<any>((resolve, reject) => {
-      db.get(
-        `SELECT id, email, name, password_reset_expires 
-         FROM users 
-         WHERE password_reset_token = ? 
-           AND password_reset_expires > ?`,
-        [token, new Date().toISOString()],
-        (err, row) => {
-          if (err) {
-            console.error('Database error:', err);
-            reject(err);
-          } else {
-            resolve(row);
-          }
-        }
-      );
-    });
+    const user = await getAsync<any>(
+      db, 
+      `SELECT id, email, name, password_reset_expires 
+       FROM users 
+       WHERE password_reset_token = ? 
+         AND password_reset_expires > ?`,
+      [token, new Date().toISOString()]
+    );
 
     if (!user) {
       return res.status(400).json({ 
@@ -201,20 +212,9 @@ export const validateResetToken = async (req: Request, res: Response) => {
   }
 };
 
-// Hash password function using bcrypt (same as authController)
-const hashPassword = async (password: string): Promise<string> => {
-  try {
-    // Use the same salt rounds as your UserService
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-    return hashedPassword;
-  } catch (error) {
-    console.error('Password hashing error:', error);
-    throw new Error('Failed to hash password');
-  }
-};
-
+// ============================================
 // Reset password with token
+// ============================================
 export const resetPassword = async (req: Request, res: Response) => {
   try {
     const { token, newPassword } = req.body;
@@ -241,23 +241,14 @@ export const resetPassword = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Check if token is valid and not expired
-    const user = await new Promise<any>((resolve, reject) => {
-      db.get(
-        `SELECT id, email, name 
-         FROM users 
-         WHERE password_reset_token = ? 
-           AND password_reset_expires > ?`,
-        [token, new Date().toISOString()],
-        (err, row) => {
-          if (err) {
-            console.error('Database error:', err);
-            reject(err);
-          } else {
-            resolve(row);
-          }
-        }
-      );
-    });
+    const user = await getAsync<any>(
+      db, 
+      `SELECT id, email, name 
+       FROM users 
+       WHERE password_reset_token = ? 
+         AND password_reset_expires > ?`,
+      [token, new Date().toISOString()]
+    );
 
     if (!user) {
       return res.status(400).json({ 
@@ -270,32 +261,20 @@ export const resetPassword = async (req: Request, res: Response) => {
     
     // Update password and clear reset token
     try {
-      await new Promise<void>((resolve, reject) => {
-        db.run(
-          `UPDATE users 
-           SET password_hash = ?, 
-               password_reset_token = NULL, 
-               password_reset_expires = NULL,
-               password_changed_at = ?,
-               updated_at = ?
-           WHERE id = ?`,
-          [
-            hashedPassword, 
-            new Date().toISOString(),
-            new Date().toISOString(),
-            user.id
-          ],
-          (err) => {
-            if (err) {
-              console.error('Database update error:', err);
-              reject(err);
-            } else {
-              console.log('Password updated for user:', user.email);
-              resolve();
-            }
-          }
-        );
-      });
+      await runAsync(db, 
+        `UPDATE users 
+         SET password_hash = ?, 
+             password_reset_token = NULL, 
+             password_reset_expires = NULL,
+             updated_at = ?
+         WHERE id = ?`,
+        [
+          hashedPassword, 
+          new Date().toISOString(),
+          user.id
+        ]
+      );
+      console.log('Password updated for user:', user.email);
     } catch (updateError) {
       console.error('Failed to update password:', updateError);
       return res.status(500).json({ 

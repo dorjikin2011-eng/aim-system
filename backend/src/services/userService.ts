@@ -1,5 +1,5 @@
 // backend/src/services/userService.ts
-import bcrypt from 'bcryptjs'; // Changed from 'bcrypt'
+import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 import { User, UserRole } from '../types/user';
@@ -17,7 +17,7 @@ interface DBUser {
   last_login?: string;
   login_attempts?: number;
   lock_until?: string;
-  is_active?: number; // SQLite uses 0/1 for boolean
+  is_active?: number;
   department?: string;
   phone?: string;
   profile_image?: string;
@@ -26,61 +26,28 @@ interface DBUser {
 }
 
 export class UserService {
-      // Find user by email
+  // Find user by email
   static async findByEmail(email: string): Promise<User | null> {
     const db = getDB();
     const searchEmail = email.toLowerCase();
     
-    console.log('Search email (with quotes):', `"${searchEmail}"`);
-    console.log('Search email length:', searchEmail.length);
+    console.log('Search email:', searchEmail);
     
     // List all users to see what's in the database
     try {
-      const allUsers = await new Promise((resolve, reject) => {
-        db.all('SELECT email, LENGTH(email) as len FROM users', [], (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        });
-      });
+      const allUsers = await allAsync<any[]>(
+        db,
+        'SELECT email, LENGTH(email) as len FROM users',
+        []
+      );
       console.log('All users in database:', allUsers);
     } catch (error) {
       console.error('Failed to get all users:', error);
     }
     
-    // Try exact match with different approaches
-    try {
-      // Approach 1: Exact match
-      const exactMatch = await new Promise((resolve, reject) => {
-        db.get('SELECT * FROM users WHERE email = ?', [searchEmail], (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        });
-      });
-      console.log('Exact match result:', exactMatch);
-      
-      // Approach 2: Trim both sides
-      const trimmedMatch = await new Promise((resolve, reject) => {
-        db.get('SELECT * FROM users WHERE TRIM(email) = ?', [searchEmail.trim()], (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        });
-      });
-      console.log('Trimmed match result:', trimmedMatch);
-      
-      // Approach 3: Case-insensitive with COLLATE NOCASE
-      const caseInsensitiveMatch = await new Promise((resolve, reject) => {
-        db.get('SELECT * FROM users WHERE email COLLATE NOCASE = ?', [searchEmail], (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        });
-      });
-      console.log('Case-insensitive match result:', caseInsensitiveMatch);
-      
-    } catch (error) {
-      console.error('Query tests failed:', error);
-    }
-    
-    const user = await getAsync<DBUser>(db, 
+    // Get user with proper async
+    const user = await getAsync<DBUser>(
+      db, 
       'SELECT * FROM users WHERE email = ?', 
       [searchEmail]
     );
@@ -93,7 +60,8 @@ export class UserService {
   // Find user by ID
   static async findById(id: string): Promise<User | null> {
     const db = getDB();
-    const user = await getAsync<DBUser>(db, 
+    const user = await getAsync<DBUser>(
+      db, 
       'SELECT * FROM users WHERE id = ?', 
       [id]
     );
@@ -131,7 +99,7 @@ export class UserService {
       userData.agency_id || null,
       userData.department || null,
       userData.phone || null,
-      1 // is_active
+      1
     ]);
 
     return {
@@ -242,7 +210,7 @@ export class UserService {
     return await bcrypt.compare(password, user.password_hash);
   }
 
-    // Verify password by email
+  // Verify password by email
   static async verifyPasswordByEmail(email: string, password: string): Promise<boolean> {
     const user = await this.findByEmail(email);
     
@@ -253,10 +221,7 @@ export class UserService {
     
     console.log('verifyPasswordByEmail - User found:', user.email);
     console.log('verifyPasswordByEmail - Password provided:', password);
-    console.log('verifyPasswordByEmail - Stored hash:', user.password_hash);
-    console.log('verifyPasswordByEmail - Hash length:', user.password_hash?.length);
-    console.log('verifyPasswordByEmail - Hash first 20 chars:', user.password_hash?.substring(0, 20));
-    console.log('verifyPasswordByEmail - Hash last 20 chars:', user.password_hash?.substring(user.password_hash.length - 20));
+    console.log('verifyPasswordByEmail - Stored hash length:', user.password_hash?.length);
     
     // Check if hash looks like a bcrypt hash
     const isBcryptHash = user.password_hash?.startsWith('$2a$') || 
@@ -264,18 +229,11 @@ export class UserService {
                          user.password_hash?.startsWith('$2y$');
     console.log('verifyPasswordByEmail - Looks like bcrypt hash:', isBcryptHash);
     
-    // Manual test
-    const manualTest = await bcrypt.compare(password, user.password_hash);
-    console.log('verifyPasswordByEmail - Manual bcrypt.compare result:', manualTest);
+    const result = await bcrypt.compare(password, user.password_hash);
+    console.log('verifyPasswordByEmail - bcrypt.compare result:', result);
     
-    // Also try trimming the hash in case there are spaces
-    const trimmedHash = user.password_hash?.trim();
-    const trimmedTest = await bcrypt.compare(password, trimmedHash);
-    console.log('verifyPasswordByEmail - Trimmed hash test:', trimmedTest);
-    
-    return manualTest;
+    return result;
   }
-
 
   // Update last login
   static async updateLastLogin(userId: string): Promise<void> {
@@ -295,7 +253,8 @@ export class UserService {
     const db = getDB();
     
     // Get current attempts
-    const user = await getAsync<DBUser>(db, 
+    const user = await getAsync<DBUser>(
+      db, 
       'SELECT login_attempts, lock_until FROM users WHERE email = ?', 
       [email.toLowerCase()]
     );
@@ -307,7 +266,7 @@ export class UserService {
     
     // Check if lock has expired
     if (lockUntil && new Date(lockUntil) < new Date()) {
-      attempts = 1; // Reset attempts after lock expires
+      attempts = 1;
       lockUntil = null;
     }
     
@@ -351,7 +310,7 @@ export class UserService {
     
     if (lockUntil <= now) return 0;
     
-    return Math.ceil((lockUntil.getTime() - now.getTime()) / 60000); // minutes
+    return Math.ceil((lockUntil.getTime() - now.getTime()) / 60000);
   }
 
   // Map database user to User type
@@ -473,9 +432,11 @@ export class UserService {
   // Get all users (for admin)
   static async getAllUsers(): Promise<User[]> {
     const db = getDB();
-    const users = await allAsync<DBUser>(db, `
-      SELECT * FROM users ORDER BY created_at DESC
-    `);
+    const users = await allAsync<DBUser[]>(
+      db, 
+      'SELECT * FROM users ORDER BY created_at DESC',
+      []
+    );
     
     return users.map(user => this.mapDBUserToUser(user));
   }
@@ -485,11 +446,13 @@ export class UserService {
     const db = getDB();
     const searchTerm = `%${query}%`;
     
-    const users = await allAsync<DBUser>(db, `
-      SELECT * FROM users 
-      WHERE name LIKE ? OR email LIKE ? OR department LIKE ?
-      ORDER BY name
-    `, [searchTerm, searchTerm, searchTerm]);
+    const users = await allAsync<DBUser[]>(
+      db, 
+      `SELECT * FROM users 
+       WHERE name LIKE ? OR email LIKE ? OR department LIKE ?
+       ORDER BY name`,
+      [searchTerm, searchTerm, searchTerm]
+    );
     
     return users.map(user => this.mapDBUserToUser(user));
   }

@@ -11,6 +11,9 @@ interface AgencyRow {
   lastUpdated: string;
 }
 
+// ============================================
+// GET /api/dashboard
+// ============================================
 export async function getDashboardData(req: Request, res: Response) {
   try {
     const db = getDB();
@@ -22,7 +25,7 @@ export async function getDashboardData(req: Request, res: Response) {
     console.log('📊 Using fiscal year:', fiscalYear);
     
     // Get all agencies with their latest assessment status
-    const agencies = await allAsync<AgencyRow>(db, `
+    const agencies = await allAsync<AgencyRow[]>(db, `
       SELECT 
         a.id,
         a.name,

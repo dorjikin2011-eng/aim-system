@@ -1,4 +1,5 @@
 // backend/src/controllers/authController.ts
+
 import { Request, Response } from 'express';
 import * as bcrypt from 'bcryptjs';
 import UserService from '../services/userService';
@@ -33,7 +34,6 @@ export const login = async (req: Request, res: Response) => {
     // Find user
     const user = await UserService.findByEmail(email) as User | null;
     
-    // ✅ ADD DEBUG LOGGING HERE
     console.log('User found:', !!user);
     if (user) {
       console.log('User properties:', Object.keys(user));
@@ -52,7 +52,7 @@ export const login = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // ✅ FIX: Check both status and is_active
+    // Check both status and is_active
     const isActive = user.status === 'active' || user.is_active === true || user.is_active === 1;
     
     console.log('Active check:', {
@@ -68,30 +68,20 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    // Verify password - add debug logging
+    // Verify password
     console.log('Password hash exists:', !!user.password_hash);
     console.log('Password hash length:', user.password_hash?.length);
-    
     
     if (!user.password_hash) {
       console.error('User has no password hash:', email);
       return res.status(500).json({ error: 'Account configuration error. Please contact administrator.' });
     }
-    // Right before line 73, add:
-console.log('DEBUG - Raw password hash string:', JSON.stringify(user.password_hash));
-console.log('DEBUG - Password hash char codes:');
-for (let i = 0; i < user.password_hash.length; i++) {
-  console.log(`  [${i}]: '${user.password_hash[i]}' (${user.password_hash.charCodeAt(i)})`);
-}
     
-    // With this tested version:
-const hashToCompare = user.password_hash.trim(); // Trim any whitespace
-console.log('Comparing with hash:', hashToCompare);
-console.log('Hash length for comparison:', hashToCompare.length);
+    const hashToCompare = user.password_hash.trim();
+    console.log('Comparing with hash length:', hashToCompare.length);
 
-const isMatch = await bcrypt.compare(password, hashToCompare);
-console.log('Password match result:', isMatch);
-    
+    const isMatch = await bcrypt.compare(password, hashToCompare);
+    console.log('Password match result:', isMatch);
     
     if (!isMatch) {
       try {
@@ -113,7 +103,6 @@ console.log('Password match result:', isMatch);
     } catch (updateError) {
       const error = updateError as Error;
       console.warn('Failed to update last login:', error.message);
-      // Continue anyway - this is not critical
     }
 
     // Get user for session (without sensitive info)
@@ -122,8 +111,8 @@ console.log('Password match result:', isMatch);
       return res.status(500).json({ error: 'Failed to load user profile' });
     }
 
-    // Set session data
-    req.session.user = {
+    // Set session data with type assertion
+    (req.session as any).user = {
       id: authUser.id,
       email: authUser.email,
       name: authUser.name,
@@ -136,26 +125,25 @@ console.log('Password match result:', isMatch);
     };
 
     // Save session before responding
-req.session.save((err) => {
-  if (err) {
-    console.error('Session save error:', err);
-    return res.status(500).json({ 
-      error: 'Authentication succeeded but session failed' 
+    req.session.save((err) => {
+      if (err) {
+        console.error('Session save error:', err);
+        return res.status(500).json({ 
+          error: 'Authentication succeeded but session failed' 
+        });
+      }
+      
+      console.log('✅ Session saved successfully');
+      console.log('✅ Session ID:', req.sessionID);
+      console.log('✅ Session user:', (req.session as any).user);
+      
+      res.json({ 
+        success: true, 
+        user: (req.session as any).user,
+        message: 'Login successful',
+        sessionId: req.sessionID
+      });
     });
-  }
-  
-  console.log('✅ Session saved successfully');
-  console.log('✅ Session ID:', req.sessionID);
-  console.log('✅ Session user:', req.session.user);
-  
-  
-  res.json({ 
-    success: true, 
-    user: req.session.user,
-    message: 'Login successful',
-    sessionId: req.sessionID
-  });
-});
 
   } catch (err: any) {
     console.error('Login error:', err);
@@ -181,8 +169,7 @@ export const logout = (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Failed to log out' });
     }
     
-    // Clear session cookie (use your actual session cookie name)
-    res.clearCookie('aims.sid'); // ✅ CHANGED from 'connect.sid'
+    res.clearCookie('aims.sid');
     
     res.json({ 
       success: true, 
@@ -192,10 +179,10 @@ export const logout = (req: Request, res: Response) => {
 };
 
 export const getCurrentUser = (req: Request, res: Response) => {
-  if (req.session.user) {
+  if ((req.session as any).user) {
     res.json({ 
       success: true, 
-      user: req.session.user 
+      user: (req.session as any).user 
     });
   } else {
     res.status(401).json({ 
@@ -208,7 +195,6 @@ export const getCurrentUser = (req: Request, res: Response) => {
 export const changePassword = async (req: Request, res: Response) => {
   const { currentPassword, newPassword } = req.body;
   
-  // Validation
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ 
       success: false,
@@ -223,7 +209,6 @@ export const changePassword = async (req: Request, res: Response) => {
     });
   }
 
-  // Check password strength
   const hasUpperCase = /[A-Z]/.test(newPassword);
   const hasLowerCase = /[a-z]/.test(newPassword);
   const hasNumbers = /\d/.test(newPassword);
@@ -236,17 +221,15 @@ export const changePassword = async (req: Request, res: Response) => {
   }
 
   try {
-    // Check if user is authenticated
-    if (!req.session?.user) {
+    if (!(req.session as any)?.user) {
       return res.status(401).json({ 
         success: false,
         error: 'Not authenticated' 
       });
     }
 
-    const currentUser = req.session.user;
+    const currentUser = (req.session as any).user;
 
-    // Verify current password
     const isPasswordValid = await UserService.verifyPassword(currentUser.id, currentPassword);
     if (!isPasswordValid) {
       return res.status(401).json({ 
@@ -255,7 +238,6 @@ export const changePassword = async (req: Request, res: Response) => {
       });
     }
 
-    // Check if new password is same as old
     if (currentPassword === newPassword) {
       return res.status(400).json({
         success: false,
@@ -263,7 +245,6 @@ export const changePassword = async (req: Request, res: Response) => {
       });
     }
 
-    // Update password
     await UserService.updatePassword(currentUser.id, newPassword);
 
     res.json({ 
@@ -280,22 +261,19 @@ export const changePassword = async (req: Request, res: Response) => {
   }
 };
 
-// New function: Update user profile
 export const updateProfile = async (req: Request, res: Response) => {
   const { name, department, phone, profile_image } = req.body;
 
   try {
-    // Check if user is authenticated
-    if (!req.session?.user) {
+    if (!(req.session as any)?.user) {
       return res.status(401).json({ 
         success: false,
         error: 'Not authenticated' 
       });
     }
 
-    const currentUser = req.session.user;
+    const currentUser = (req.session as any).user;
 
-    // Validate input
     if (!name && !department && !phone && !profile_image) {
       return res.status(400).json({
         success: false,
@@ -303,7 +281,6 @@ export const updateProfile = async (req: Request, res: Response) => {
       });
     }
 
-    // Update profile
     await UserService.updateProfile(currentUser.id, {
       name,
       department,
@@ -311,11 +288,10 @@ export const updateProfile = async (req: Request, res: Response) => {
       profile_image
     });
 
-    // Update session user data
-    if (name) req.session.user.name = name;
-    if (department) req.session.user.department = department;
-    if (phone) req.session.user.phone = phone;
-    if (profile_image) req.session.user.profile_image = profile_image;
+    if (name) (req.session as any).user.name = name;
+    if (department) (req.session as any).user.department = department;
+    if (phone) (req.session as any).user.phone = phone;
+    if (profile_image) (req.session as any).user.profile_image = profile_image;
 
     req.session.save((err) => {
       if (err) {
@@ -326,7 +302,7 @@ export const updateProfile = async (req: Request, res: Response) => {
     res.json({
       success: true,
       message: 'Profile updated successfully',
-      user: req.session.user
+      user: (req.session as any).user
     });
 
   } catch (error) {
@@ -338,20 +314,17 @@ export const updateProfile = async (req: Request, res: Response) => {
   }
 };
 
-// New function: Check user status (locked, attempts, etc.)
 export const getUserStatus = async (req: Request, res: Response) => {
   try {
-    // Check if user is authenticated
-    if (!req.session?.user) {
+    if (!(req.session as any)?.user) {
       return res.status(401).json({
         success: false,
         error: 'Not authenticated'
       });
     }
 
-    const currentUser = req.session.user;
+    const currentUser = (req.session as any).user;
 
-    // Get user with status info
     const user = await UserService.findByEmail(currentUser.email) as User | null;
     if (!user) {
       return res.status(404).json({
@@ -360,7 +333,6 @@ export const getUserStatus = async (req: Request, res: Response) => {
       });
     }
 
-    // Try to get lock status, but don't fail if columns don't exist
     let isLocked = false;
     let lockTimeRemaining = 0;
     try {
@@ -392,19 +364,17 @@ export const getUserStatus = async (req: Request, res: Response) => {
   }
 };
 
-// New function: Validate session/refresh user data
 export const validateSession = async (req: Request, res: Response) => {
   try {
-    if (!req.session?.user) {
+    if (!(req.session as any)?.user) {
       return res.status(401).json({
         success: false,
         error: 'Not authenticated'
       });
     }
 
-    const currentUser = req.session.user;
+    const currentUser = (req.session as any).user;
 
-    // Refresh user data from database
     const authUser = await UserService.getAuthUserById(currentUser.id);
     if (!authUser) {
       req.session.destroy(() => {});
@@ -414,7 +384,6 @@ export const validateSession = async (req: Request, res: Response) => {
       });
     }
 
-    // Check if user is still active
     const user = await UserService.findById(currentUser.id) as User | null;
     const isActive = user?.status === 'active' || user?.is_active === true || user?.is_active === 1;
     
@@ -426,9 +395,8 @@ export const validateSession = async (req: Request, res: Response) => {
       });
     }
 
-    // Update session with latest data
-    req.session.user = {
-      ...req.session.user,
+    (req.session as any).user = {
+      ...(req.session as any).user,
       name: authUser.name,
       department: authUser.department,
       phone: authUser.phone,
@@ -444,7 +412,7 @@ export const validateSession = async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      user: req.session.user,
+      user: (req.session as any).user,
       message: 'Session is valid'
     });
 
@@ -457,7 +425,6 @@ export const validateSession = async (req: Request, res: Response) => {
   }
 };
 
-// New function: Get user profile (public info)
 export const getUserProfile = async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
@@ -469,7 +436,6 @@ export const getUserProfile = async (req: Request, res: Response) => {
       });
     }
 
-    // Get public user info
     const authUser = await UserService.getAuthUserById(userId);
     if (!authUser) {
       return res.status(404).json({
@@ -478,16 +444,13 @@ export const getUserProfile = async (req: Request, res: Response) => {
       });
     }
 
-    // Check if requesting user has permission
-    const isSelf = req.session?.user?.id === userId;
-    const isAdmin = req.session?.user?.role === 'system_admin';
+    const isSelf = (req.session as any)?.user?.id === userId;
+    const isAdmin = (req.session as any)?.user?.role === 'system_admin';
 
-    // Return appropriate data based on permissions
     const userData = {
       id: authUser.id,
       name: authUser.name,
       department: authUser.department,
-      // Only include email and phone for self or admin
       ...((isSelf || isAdmin) && { email: authUser.email }),
       ...((isSelf || isAdmin) && { phone: authUser.phone }),
       profile_image: authUser.profile_image,

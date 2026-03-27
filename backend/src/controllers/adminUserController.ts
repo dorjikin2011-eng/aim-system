@@ -1,17 +1,21 @@
 // backend/src/controllers/adminUserController.ts
 import { Request, Response } from 'express';
-import { getDB } from '../models/db';
+import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 import { logAction } from '../services/auditService';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { sendPasswordResetEmail } from '../services/emailService';
+import nodemailer from 'nodemailer';
+
+// Frontend URL configuration
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://frontend-alpha-nine-65.vercel.app';
 
 // Map frontend role names to database role names
 const mapRoleToDB = (role: string): string => {
   const roleMap: Record<string, string> = {
-    'system_admin': 'admin',
-    'agency_head': 'hoa',
-    'focal_person': 'focal_point',
+    'system_admin': 'system_admin',
+    'agency_head': 'agency_head',
+    'focal_person': 'focal_person',
     'prevention_officer': 'prevention_officer',
     'commissioner': 'commissioner',
     'director': 'director'
@@ -35,22 +39,23 @@ const generateTempPassword = () => {
   return randomBytes(8).toString('hex');
 };
 
+// ============================================
 // GET /api/admin/users
+// ============================================
 export const getUsers = async (req: Request, res: Response) => {
   try {
     const db = getDB();
-    const users = await new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT 
-          u.id, u.email, u.name, u.role, u.is_active, u.phone, u.department,
-          u.created_at, u.updated_at,
-          a.name as agency_name
-         FROM users u
-         LEFT JOIN agencies a ON u.agency_id = a.id
-         ORDER BY u.created_at DESC`,
-        (err, rows) => err ? reject(err) : resolve(rows)
-      );
-    });
+    
+    const users = await allAsync<any[]>(db, 
+      `SELECT 
+        u.id, u.email, u.name, u.role, u.is_active, u.phone, u.department,
+        u.created_at, u.updated_at,
+        a.name as agency_name
+       FROM users u
+       LEFT JOIN agencies a ON u.agency_id = a.id
+       ORDER BY u.created_at DESC`,
+      []
+    );
 
     const mappedUsers = users.map(user => ({
       ...user,
@@ -64,23 +69,22 @@ export const getUsers = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // GET /api/admin/users/:id
+// ============================================
 export const getUser = async (req: Request, res: Response) => {
   const { id } = req.params;
   
   try {
     const db = getDB();
     
-    const user = await new Promise<any>((resolve, reject) => {
-      db.get(
-        `SELECT 
-          id, email, username, full_name as name, role, agency_id,
-          phone, department as position, is_active, created_at, updated_at
-         FROM users WHERE id = ?`,
-        [id],
-        (err, row) => err ? reject(err) : resolve(row)
-      );
-    });
+    const user = await getAsync<any>(db, 
+      `SELECT 
+        id, email, name, role, agency_id,
+        phone, department as position, is_active, created_at, updated_at
+       FROM users WHERE id = ?`,
+      [id]
+    );
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -99,15 +103,14 @@ export const getUser = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // POST /api/admin/users
+// ============================================
 export const createUser = async (req: Request, res: Response) => {
   const { email, name, role, agencyId, phone, position, sendEmail: shouldSendEmail } = req.body;
   
   // Map role to database value
   const dbRole = mapRoleToDB(role);
-  
-  // Auto-generate username from email (part before @)
-  const username = email.split('@')[0].toLowerCase();
 
   // Validation
   if (!email || !name || !role) {
@@ -124,11 +127,10 @@ export const createUser = async (req: Request, res: Response) => {
     const db = getDB();
 
     // Check duplicate email
-    const existing = await new Promise<any>((resolve, reject) => {
-      db.get('SELECT id FROM users WHERE email = ?', [email], (err, row) => {
-        err ? reject(err) : resolve(row);
-      });
-    });
+    const existing = await getAsync<any>(db, 
+      'SELECT id FROM users WHERE email = ?', 
+      [email]
+    );
 
     if (existing) {
       return res.status(409).json({ error: 'User with this email already exists' });
@@ -141,84 +143,85 @@ export const createUser = async (req: Request, res: Response) => {
     const id = `USR_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
     const now = new Date().toISOString();
 
-    // Insert ALL columns matching your table schema
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `INSERT INTO users (
-          id, username, email, full_name, password_hash, role, agency_id, 
-          phone, department, is_active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-        [
-          id,
-          username,
-          email,
-          name,
-          hash,
-          dbRole,
-          agencyId || null,
-          phone || null,
-          position || null,
-          now,
-          now
-        ],
-        (err) => err ? reject(err) : resolve()
-      );
-    });
+    // Insert user
+    await runAsync(db, 
+      `INSERT INTO users (
+        id, email, name, password_hash, role, agency_id, 
+        phone, department, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      [
+        id,
+        email,
+        name,
+        hash,
+        dbRole,
+        agencyId || null,
+        phone || null,
+        position || null,
+        now,
+        now
+      ]
+    );
 
-    // Send email if requested using shared service
+    // Send email if requested
     if (shouldSendEmail) {
-      const welcomeHtml = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <div style="background: #1e40af; padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">ACC AIMS</h1>
-            <p style="color: #dbeafe; margin: 5px 0 0 0;">Anti-Corruption Commission</p>
-          </div>
-          
-          <div style="padding: 24px;">
-            <h2 style="color: #1e40af;">Welcome to AIMS</h2>
-            <p>Hello ${name},</p>
-            <p>Your account has been successfully created by the Anti-Corruption Commission.</p>
-            
-            <div style="background: #f3f4f6; border-left: 4px solid #1e40af; padding: 16px; margin: 20px 0;">
-              <p><strong>Email:</strong> ${email}</p>
-              <p><strong>Temporary Password:</strong> <code style="background: #e5e7eb; padding: 2px 6px; border-radius: 4px;">${tempPassword}</code></p>
+      try {
+        const welcomeHtml = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background: #1e40af; padding: 20px; text-align: center;">
+              <h1 style="color: white; margin: 0;">ACC AIMS</h1>
+              <p style="color: #dbeafe; margin: 5px 0 0 0;">Anti-Corruption Commission</p>
             </div>
             
-            <p><strong>Important:</strong> You must change this password immediately after your first login.</p>
-            
-            <div style="text-align: center; margin: 24px 0;">
-              <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}" 
-                 style="display: inline-block; background: #1e40af; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
-                Login to AIMS
-              </a>
+            <div style="padding: 24px;">
+              <h2 style="color: #1e40af;">Welcome to AIMS</h2>
+              <p>Hello ${name},</p>
+              <p>Your account has been successfully created by the Anti-Corruption Commission.</p>
+              
+              <div style="background: #f3f4f6; border-left: 4px solid #1e40af; padding: 16px; margin: 20px 0;">
+                <p><strong>Email:</strong> ${email}</p>
+                <p><strong>Temporary Password:</strong> <code style="background: #e5e7eb; padding: 2px 6px; border-radius: 4px;">${tempPassword}</code></p>
+              </div>
+              
+              <p><strong>Important:</strong> You must change this password immediately after your first login.</p>
+              
+              <div style="text-align: center; margin: 24px 0;">
+                <a href="${FRONTEND_URL}/login" 
+                   style="display: inline-block; background: #1e40af; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                  Login to AIMS
+                </a>
+              </div>
+              
+              <p style="font-size: 12px; color: #6b7280; margin-top: 24px;">
+                This is an automated message. Please do not reply to this email.
+                If you did not request this account, please contact the ACC IT Department.
+              </p>
             </div>
-            
-            <p style="font-size: 12px; color: #6b7280; margin-top: 24px;">
-              This is an automated message. Please do not reply to this email.
-              If you did not request this account, please contact the ACC IT Department.
-            </p>
           </div>
-        </div>
-      `;
-      
-      const transporter = require('nodemailer').createTransport({
-        host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-        port: parseInt(process.env.EMAIL_PORT || '587'),
-        secure: false,
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS
-        }
-      });
-      
-      await transporter.sendMail({
-        from: process.env.EMAIL_FROM || `"ACC AIMS" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: 'Your AIMS Account Has Been Created',
-        html: welcomeHtml
-      });
-      
-      console.log(`✅ Welcome email sent successfully to ${email}`);
+        `;
+        
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST || 'smtp.gmail.com',
+          port: parseInt(process.env.SMTP_PORT || '587'),
+          secure: process.env.SMTP_SECURE === 'true',
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASSWORD
+          }
+        });
+        
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM_EMAIL || `"ACC AIMS" <${process.env.SMTP_USER}>`,
+          to: email,
+          subject: 'Your AIMS Account Has Been Created',
+          html: welcomeHtml
+        });
+        
+        console.log(`✅ Welcome email sent successfully to ${email}`);
+      } catch (emailError) {
+        console.error(`❌ Failed to send welcome email to ${email}:`, emailError);
+        // Don't fail the user creation if email fails
+      }
     }
 
     // Audit log
@@ -233,7 +236,6 @@ export const createUser = async (req: Request, res: Response) => {
     res.status(201).json({ 
       user: { 
         id, 
-        username,
         email, 
         name, 
         role, 
@@ -243,16 +245,15 @@ export const createUser = async (req: Request, res: Response) => {
         created_at: now 
       } 
     });
-  } catch (err: any) {
+  } catch (err) {
     console.error('User create error:', err);
-    if (err.message?.includes('Failed to send email')) {
-      return res.status(500).json({ error: 'User created but email notification failed. Contact system administrator.' });
-    }
     res.status(500).json({ error: 'Failed to create user' });
   }
 };
 
+// ============================================
 // PUT /api/admin/users/:id
+// ============================================
 export const updateUser = async (req: Request, res: Response) => {
   const { id } = req.params;
   const { name, role, agencyId, phone, position } = req.body;
@@ -267,11 +268,10 @@ export const updateUser = async (req: Request, res: Response) => {
   try {
     const db = getDB();
 
-    const current = await new Promise<any>((resolve, reject) => {
-      db.get('SELECT email, full_name as name, role, agency_id, phone, department FROM users WHERE id = ?', [id], (err, row) => {
-        err ? reject(err) : resolve(row);
-      });
-    });
+    const current = await getAsync<any>(db, 
+      'SELECT email, name, role, agency_id, phone, department FROM users WHERE id = ?', 
+      [id]
+    );
 
     if (!current) {
       return res.status(404).json({ error: 'User not found' });
@@ -281,7 +281,7 @@ export const updateUser = async (req: Request, res: Response) => {
     const params: any[] = [];
 
     if (current.name !== name) {
-      changes.push('full_name = ?');
+      changes.push('name = ?');
       params.push(name);
     }
     if (current.role !== role) {
@@ -309,13 +309,10 @@ export const updateUser = async (req: Request, res: Response) => {
     params.push(new Date().toISOString());
     params.push(id);
     
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `UPDATE users SET ${changes.join(', ')}, updated_at = ? WHERE id = ?`,
-        params,
-        (err) => err ? reject(err) : resolve()
-      );
-    });
+    await runAsync(db, 
+      `UPDATE users SET ${changes.join(', ')}, updated_at = ? WHERE id = ?`,
+      params
+    );
 
     await logAction(req, 'update_user', { type: 'user', id }, { 
       before: current, 
@@ -340,32 +337,30 @@ export const updateUser = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // DELETE /api/admin/users/:id
+// ============================================
 export const deleteUser = async (req: Request, res: Response) => {
   const { id } = req.params;
 
   try {
     const db = getDB();
 
-    if (req.session?.user?.id === id) {
+    // Use type assertion for session user
+    if ((req.session as any)?.user?.id === id) {
       return res.status(400).json({ error: 'Cannot delete your own account' });
     }
 
-    const user = await new Promise<any>((resolve, reject) => {
-      db.get('SELECT email, full_name as name, role FROM users WHERE id = ?', [id], (err, row) => {
-        err ? reject(err) : resolve(row);
-      });
-    });
+    const user = await getAsync<any>(db, 
+      'SELECT email, name, role FROM users WHERE id = ?', 
+      [id]
+    );
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    await new Promise<void>((resolve, reject) => {
-      db.run('DELETE FROM users WHERE id = ?', [id], (err) => {
-        err ? reject(err) : resolve();
-      });
-    });
+    await runAsync(db, 'DELETE FROM users WHERE id = ?', [id]);
 
     await logAction(req, 'delete_user', { type: 'user', id }, user);
 
@@ -376,18 +371,19 @@ export const deleteUser = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // POST /api/admin/users/:id/reset-password
+// ============================================
 export const resetPassword = async (req: Request, res: Response) => {
   const { id } = req.params;
 
   try {
     const db = getDB();
 
-    const user = await new Promise<any>((resolve, reject) => {
-      db.get('SELECT email, full_name as name FROM users WHERE id = ?', [id], (err, row) => {
-        err ? reject(err) : resolve(row);
-      });
-    });
+    const user = await getAsync<any>(db, 
+      'SELECT email, name FROM users WHERE id = ?', 
+      [id]
+    );
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -396,13 +392,10 @@ export const resetPassword = async (req: Request, res: Response) => {
     const tempPassword = generateTempPassword();
     const hash = await bcrypt.hash(tempPassword, 10);
     
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        'UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?',
-        [hash, new Date().toISOString(), id],
-        (err) => err ? reject(err) : resolve()
-      );
-    });
+    await runAsync(db, 
+      'UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?',
+      [hash, new Date().toISOString(), id]
+    );
 
     await sendPasswordResetEmail(user.email, tempPassword);
 
@@ -411,7 +404,7 @@ export const resetPassword = async (req: Request, res: Response) => {
     });
 
     res.json({ success: true });
-  } catch (err: any) {
+  } catch (err) {
     console.error('Password reset error:', err);
     res.status(500).json({ error: 'Failed to reset password' });
   }

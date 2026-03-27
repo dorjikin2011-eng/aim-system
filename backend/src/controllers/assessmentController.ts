@@ -1,4 +1,4 @@
-// backend/src/controllers/assessmentController.ts - COMPLETE FIXED VERSION
+// backend/src/controllers/assessmentController.ts - COMPLETE FIXED VERSION WITH PROPER TYPES
 import { Request, Response } from 'express';
 import { getDB, getAsync, allAsync, runAsync } from '../models/db';
 import { FormGenerator } from '../utils/FormGenerator';
@@ -74,7 +74,7 @@ interface SubmitAssessmentBody {
 
 // Generate simple UUID-like string
 function generateId(): string {
-  return [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
+  return crypto.randomUUID ? crypto.randomUUID() : [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
 }
 
 // Helper function for audit logging
@@ -108,13 +108,15 @@ async function logAssessmentAction(
 async function findTemplateForIndicator(indicatorId: string): Promise<string | null> {
   try {
     const db = getDB();
+    
     // First, try to find templates by indicatorIds array
-    const templates = await allAsync<any>(
+    const templates = await allAsync<any[]>(
       db,
       `SELECT id FROM form_templates
       WHERE is_active = 1
       AND template_type IN ('assessment', 'custom')
-      ORDER BY created_at DESC`
+      ORDER BY created_at DESC`,
+      []
     );
 
     // Check each template for the indicator
@@ -128,7 +130,7 @@ async function findTemplateForIndicator(indicatorId: string): Promise<string | n
     // If no template found, try to find a default template for the indicator's category
     const indicator = await IndicatorConfig.getById(indicatorId);
     if (indicator) {
-      const defaultTemplates = await allAsync<any>(
+      const defaultTemplates = await allAsync<any[]>(
         db,
         `SELECT id FROM form_templates
         WHERE is_active = 1
@@ -154,9 +156,10 @@ async function findTemplateForIndicator(indicatorId: string): Promise<string | n
 // Helper function to get all indicators
 async function getAllIndicators(db: any) {
   try {
-    const indicators = await allAsync<any>(
+    const indicators = await allAsync<any[]>(
       db,
-      `SELECT id, code, name FROM indicators LIMIT 10`
+      `SELECT id, code, name FROM indicators LIMIT 10`,
+      []
     );
     return indicators;
   } catch (error) {
@@ -246,7 +249,9 @@ function calculateAIMSScore(formData: any): number {
   return totalScore;
 }
 
+// ============================================
 // Get assessment progress for an agency
+// ============================================
 export async function getAssessmentProgress(req: Request, res: Response) {
   console.log('✅✅✅ getAssessmentProgress HIT!', req.params);
   try {
@@ -281,7 +286,7 @@ export async function getAssessmentProgress(req: Request, res: Response) {
     }
 
     // Get all dynamic assessment responses for this assessment
-    const indicatorResponses = await allAsync<DynamicAssessmentResponseRow>(
+    const indicatorResponses = await allAsync<DynamicAssessmentResponseRow[]>(
       db,
       `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ?`,
       [assessment.id]
@@ -291,19 +296,21 @@ export async function getAssessmentProgress(req: Request, res: Response) {
     const indicator_scores: Record<string, number> = {};
     const response_data: Record<string, any> = {};
 
-    indicatorResponses.forEach(response => {
-      if (response.indicator_id) {
-        indicator_scores[response.indicator_id] = response.final_score;
-        // Parse response data if exists
-        if (response.response_data) {
-          try {
-            response_data[response.indicator_id] = JSON.parse(response.response_data);
-          } catch (error) {
-            console.error('Error parsing response data:', error);
+    if (indicatorResponses && Array.isArray(indicatorResponses)) {
+      indicatorResponses.forEach(response => {
+        if (response.indicator_id) {
+          indicator_scores[response.indicator_id] = response.final_score;
+          // Parse response data if exists
+          if (response.response_data) {
+            try {
+              response_data[response.indicator_id] = JSON.parse(response.response_data);
+            } catch (error) {
+              console.error('Error parsing response data:', error);
+            }
           }
         }
-      }
-    });
+      });
+    }
 
     res.json({
       success: true,
@@ -337,7 +344,9 @@ export async function getAssessmentProgress(req: Request, res: Response) {
   }
 }
 
-// Save single indicator assessment WITH DYNAMIC SCORING - FIXED INDICATOR MAPPING
+// ============================================
+// Save single indicator assessment
+// ============================================
 export async function saveIndicatorAssessment(req: Request, res: Response) {
   try {
     const { agency_id, indicatorId, score, responseData, last_updated, templateId } = req.body as SaveAssessmentBody;
@@ -353,7 +362,7 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
 
     // Map frontend indicator IDs to actual database IDs
     const indicatorIdMap: Record<string, string> = {
-      'aims-assessment': 'ind_1770114038668_i6jrig8sz', // ICCS
+      'aims-assessment': 'ind_1770114038668_i6jrig8sz',
       'iccs': 'ind_1770114038668_i6jrig8sz',
       'ind_iccs': 'ind_1770114038668_i6jrig8sz',
       'training': 'ind_1770114038672_noe0zgtjx',
@@ -564,7 +573,7 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
     }
 
     // Calculate overall score from all responses
-    const allResponses = await allAsync<any>(
+    const allResponses = await allAsync<any[]>(
       db,
       `SELECT final_score FROM dynamic_assessment_responses WHERE assessment_id = ?`,
       [assessmentId]
@@ -644,7 +653,9 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
   }
 }
 
-// Save all assessments at once WITH DYNAMIC SCORING
+// ============================================
+// Save all assessments at once
+// ============================================
 export async function saveAllAssessments(req: Request, res: Response) {
   try {
     const { agency_id, indicator_scores, response_data, status } = req.body as SaveAllAssessmentBody;
@@ -857,7 +868,9 @@ export async function saveAllAssessments(req: Request, res: Response) {
   }
 }
 
-// Calculate score for specific indicator using DYNAMIC FORM GENERATOR
+// ============================================
+// Calculate score for specific indicator
+// ============================================
 export async function calculateIndicatorScore(req: Request, res: Response) {
   try {
     const { indicatorId, responseData, templateId } = req.body;
@@ -934,7 +947,9 @@ export async function calculateIndicatorScore(req: Request, res: Response) {
   }
 }
 
+// ============================================
 // Submit assessment for validation
+// ============================================
 export async function submitAssessment(req: Request, res: Response) {
   try {
     const { agency_id, submitted_at } = req.body as SubmitAssessmentBody;
@@ -1001,7 +1016,9 @@ export async function submitAssessment(req: Request, res: Response) {
   }
 }
 
+// ============================================
 // Validate assessment
+// ============================================
 export async function validateAssessment(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
@@ -1087,7 +1104,9 @@ export async function validateAssessment(req: Request, res: Response) {
   }
 }
 
+// ============================================
 // Finalize assessment (lock scores)
+// ============================================
 export async function finalizeAssessment(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
@@ -1129,7 +1148,7 @@ export async function finalizeAssessment(req: Request, res: Response) {
     const now = new Date().toISOString();
 
     // FIRST: Get all indicator responses for this assessment
-    const indicatorResponses = await allAsync<any>(
+    const indicatorResponses = await allAsync<any[]>(
       db,
       `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ?`,
       [assessment.id]
@@ -1248,7 +1267,9 @@ export async function finalizeAssessment(req: Request, res: Response) {
   }
 }
 
+// ============================================
 // Unlock assessment
+// ============================================
 export async function unlockAssessment(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
@@ -1347,7 +1368,9 @@ export async function unlockAssessment(req: Request, res: Response) {
   }
 }
 
+// ============================================
 // Get full assessment details (with all dynamic indicator responses)
+// ============================================
 export async function getFullAssessment(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
@@ -1368,47 +1391,47 @@ export async function getFullAssessment(req: Request, res: Response) {
     }
 
     // Get all dynamic assessment responses
-    const indicatorResponses = await allAsync<DynamicAssessmentResponseRow>(
+    const indicatorResponses = await allAsync<DynamicAssessmentResponseRow[]>(
       db,
       `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ? ORDER BY created_at`,
       [assessment.id]
     );
 
     // Parse response data and enhance with indicator information
-    const parsedResponses = await Promise.all(
-      indicatorResponses.map(async (response) => {
-        const baseResponse = {
-          ...response,
-          response_data: response.response_data ? JSON.parse(response.response_data) : {},
-          evidence_files: response.evidence_files ? JSON.parse(response.evidence_files) : [],
-          scoring_breakdown: response.comments ? JSON.parse(response.comments) : null
-        };
+    const parsedResponses = [];
+    for (const response of indicatorResponses) {
+      const baseResponse = {
+        ...response,
+        response_data: response.response_data ? JSON.parse(response.response_data) : {},
+        evidence_files: response.evidence_files ? JSON.parse(response.evidence_files) : [],
+        scoring_breakdown: response.comments ? JSON.parse(response.comments) : null
+      };
 
-        // Get indicator details
-        try {
-          const indicator = await IndicatorConfig.getById(response.indicator_id);
-          if (indicator) {
-            return {
-              ...baseResponse,
-              indicator: {
-                id: indicator.id,
-                name: indicator.name,
-                code: indicator.code,
-                category: indicator.category,
-                weight: indicator.weight,
-                maxScore: indicator.maxScore,
-                scoringMethod: indicator.scoringMethod,
-                parameters: indicator.parameters
-              }
-            };
-          }
-        } catch (error) {
-          console.error(`Error fetching indicator ${response.indicator_id}:`, error);
+      // Get indicator details
+      try {
+        const indicator = await IndicatorConfig.getById(response.indicator_id);
+        if (indicator) {
+          parsedResponses.push({
+            ...baseResponse,
+            indicator: {
+              id: indicator.id,
+              name: indicator.name,
+              code: indicator.code,
+              category: indicator.category,
+              weight: indicator.weight,
+              maxScore: indicator.maxScore,
+              scoringMethod: indicator.scoringMethod,
+              parameters: indicator.parameters
+            }
+          });
+        } else {
+          parsedResponses.push(baseResponse);
         }
-
-        return baseResponse;
-      })
-    );
+      } catch (error) {
+        console.error(`Error fetching indicator ${response.indicator_id}:`, error);
+        parsedResponses.push(baseResponse);
+      }
+    }
 
     res.json({
       success: true,
@@ -1427,21 +1450,23 @@ export async function getFullAssessment(req: Request, res: Response) {
   }
 }
 
+// ============================================
 // Get assessment statistics
+// ============================================
 export async function getAssessmentStats(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
     const db = getDB();
 
     // Get all assessments for this agency
-    const assessments = await allAsync<AssessmentRow>(
+    const assessments = await allAsync<AssessmentRow[]>(
       db,
       `SELECT * FROM assessments WHERE agency_id = ? ORDER BY fiscal_year DESC`,
       [agencyId]
     );
 
     // Get dynamic responses count
-    const dynamicResponses = await allAsync<{ count: number }>(
+    const dynamicResponses = await allAsync<any[]>(
       db,
       `SELECT COUNT(*) as count FROM dynamic_assessment_responses dar
       JOIN assessments a ON dar.assessment_id = a.id
@@ -1474,7 +1499,9 @@ export async function getAssessmentStats(req: Request, res: Response) {
   }
 }
 
+// ============================================
 // Generate form for assessment using FormGenerator
+// ============================================
 export async function generateAssessmentForm(req: Request, res: Response) {
   try {
     const { templateId, agencyId, indicatorId } = req.query;
@@ -1525,7 +1552,7 @@ export async function generateAssessmentForm(req: Request, res: Response) {
       );
 
       if (assessment) {
-        const responses = await allAsync<DynamicAssessmentResponseRow>(
+        const responses = await allAsync<any[]>(
           db,
           `SELECT indicator_id, response_data FROM dynamic_assessment_responses
           WHERE assessment_id = ?`,
@@ -1567,7 +1594,9 @@ export async function generateAssessmentForm(req: Request, res: Response) {
   }
 }
 
+// ============================================
 // Validate form data against indicator parameters
+// ============================================
 export async function validateFormData(req: Request, res: Response) {
   try {
     const { indicatorId, formData } = req.body;
@@ -1675,7 +1704,9 @@ export async function validateFormData(req: Request, res: Response) {
   }
 }
 
-// Get agency report data - FIXED VERSION with proper typing
+// ============================================
+// Get agency report data
+// ============================================
 export async function getAgencyReport(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
@@ -1740,7 +1771,7 @@ export async function getAgencyReport(req: Request, res: Response) {
     }
 
     // Get the response data
-    const responses = await allAsync<any>(
+    const responses = await allAsync<any[]>(
       db,
       `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ?`,
       [assessment.id]
@@ -1842,7 +1873,8 @@ export async function getAgencyReport(req: Request, res: Response) {
       `SELECT 
         MAX(CASE WHEN config_key = 'integrity.threshold.high' THEN config_value END) as high_threshold,
         MAX(CASE WHEN config_key = 'integrity.threshold.medium' THEN config_value END) as medium_threshold
-       FROM system_config`
+       FROM system_config`,
+      []
     );
 
     const highThreshold = thresholds?.high_threshold ? Number(thresholds.high_threshold) : 80;

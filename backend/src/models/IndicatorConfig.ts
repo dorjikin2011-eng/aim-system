@@ -667,22 +667,25 @@ await runAsync(
       );
       
       // Count by category
-      const categoryResult = await allAsync<{ category: string; count: number }>(
-        db,
-        'SELECT category, COUNT(*) as count FROM indicators WHERE is_active = 1 GROUP BY category'
-      );
-      
-      const byCategory: Record<string, number> = {};
-      categoryResult.forEach(row => {
-        byCategory[row.category] = row.count;
-      });
-      
-      return {
-        total: totalResult?.count || 0,
-        byCategory,
-        active: activeResult?.count || 0,
-        inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
-      };
+const categoryResult = await allAsync<{ category: string; count: number }>(
+  db,
+  'SELECT category, COUNT(*) as count FROM indicators WHERE is_active = 1 GROUP BY category',
+  []
+);
+
+const byCategory: Record<string, number> = {};
+// Ensure categoryResult is an array before using forEach
+const categories = Array.isArray(categoryResult) ? categoryResult : [];
+categories.forEach(row => {
+  byCategory[row.category] = row.count;
+});
+
+return {
+  total: totalResult?.count || 0,
+  byCategory,
+  active: activeResult?.count || 0,
+  inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
+};
     } catch (error) {
       console.error('Error getting indicator statistics:', error);
       throw error;

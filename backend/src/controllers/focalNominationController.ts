@@ -1,39 +1,39 @@
+// backend/src/controllers/focalNominationController.ts
 import { Request, Response } from 'express';
-import { getDB } from '../models/db';
+import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 import { logAction } from '../services/auditService';
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 
+// ============================================
 // GET /api/hoa/nominations - Get nominations by HoA
+// ============================================
 export const getHoaNominations = async (req: Request, res: Response) => {
   try {
     const db = getDB();
-    const hoaId = req.session?.user?.id;
+    const hoaId = (req as any).user?.id;
     
     if (!hoaId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const nominations = await new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT 
-          fn.id,
-          fn.nominee_email,
-          fn.nominee_name,
-          fn.nominee_position,
-          fn.status,
-          fn.comments,
-          fn.created_at,
-          fn.updated_at,
-          a.name as agency_name
-         FROM focal_nominations fn
-         JOIN agencies a ON fn.agency_id = a.id
-         WHERE fn.nominated_by = ?
-         ORDER BY fn.created_at DESC`,
-        [hoaId],
-        (err, rows) => err ? reject(err) : resolve(rows)
-      );
-    });
+    const nominations = await allAsync<any[]>(db, 
+      `SELECT 
+        fn.id,
+        fn.nominee_email,
+        fn.nominee_name,
+        fn.nominee_position,
+        fn.status,
+        fn.comments,
+        fn.created_at,
+        fn.updated_at,
+        a.name as agency_name
+       FROM focal_nominations fn
+       JOIN agencies a ON fn.agency_id = a.id
+       WHERE fn.nominated_by = ?
+       ORDER BY fn.created_at DESC`,
+      [hoaId]
+    );
 
     res.json({ nominations });
   } catch (err) {
@@ -42,10 +42,12 @@ export const getHoaNominations = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // POST /api/hoa/nominate-focal - HoA nominates focal person
+// ============================================
 export const nominateFocal = async (req: Request, res: Response) => {
   const { nomineeEmail, nomineeName, nomineePosition } = req.body;
-  const hoaId = req.session?.user?.id;
+  const hoaId = (req as any).user?.id;
   
   if (!hoaId || !nomineeEmail || !nomineeName) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -55,12 +57,11 @@ export const nominateFocal = async (req: Request, res: Response) => {
     const db = getDB();
 
     // Get agency ID for HoA
-    const agencyRow = await new Promise<any>((resolve, reject) => {
-      db.get('SELECT agency_id FROM users WHERE id = ?', [hoaId], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+    const agencyRow = await getAsync<any>(
+      db, 
+      'SELECT agency_id FROM users WHERE id = ?', 
+      [hoaId]
+    );
 
     if (!agencyRow || !agencyRow.agency_id) {
       return res.status(400).json({ error: 'HoA not assigned to an agency' });
@@ -69,13 +70,11 @@ export const nominateFocal = async (req: Request, res: Response) => {
     const agencyId = agencyRow.agency_id;
 
     // Check if nomination already exists
-    const existing = await new Promise<any>((resolve, reject) => {
-      db.get(
-        'SELECT id FROM focal_nominations WHERE nominee_email = ? AND agency_id = ? AND status = "pending"',
-        [nomineeEmail, agencyId],
-        (err, row) => err ? reject(err) : resolve(row)
-      );
-    });
+    const existing = await getAsync<any>(
+      db, 
+      'SELECT id FROM focal_nominations WHERE nominee_email = ? AND agency_id = ? AND status = "pending"',
+      [nomineeEmail, agencyId]
+    );
 
     if (existing) {
       return res.status(409).json({ error: 'Pending nomination already exists for this email' });
@@ -85,15 +84,12 @@ export const nominateFocal = async (req: Request, res: Response) => {
     const id = `NOM_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
     const now = new Date().toISOString();
 
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `INSERT INTO focal_nominations (
-          id, agency_id, nominated_by, nominee_email, nominee_name, nominee_position, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-        [id, agencyId, hoaId, nomineeEmail, nomineeName, nomineePosition, now, now],
-        (err) => err ? reject(err) : resolve()
-      );
-    });
+    await runAsync(db, 
+      `INSERT INTO focal_nominations (
+        id, agency_id, nominated_by, nominee_email, nominee_name, nominee_position, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      [id, agencyId, hoaId, nomineeEmail, nomineeName, nomineePosition, now, now]
+    );
 
     // Audit log
     await logAction(req, 'nominate_focal', { type: 'focal_nomination', id }, { 
@@ -118,33 +114,33 @@ export const nominateFocal = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // GET /api/admin/focal-nominations - Get all pending nominations for ACC
+// ============================================
 export const getPendingNominations = async (req: Request, res: Response) => {
   try {
     const db = getDB();
 
-    const nominations = await new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT 
-          fn.id,
-          fn.nominee_email,
-          fn.nominee_name,
-          fn.nominee_position,
-          fn.status,
-          fn.comments,
-          fn.created_at,
-          fn.updated_at,
-          a.name as agency_name,
-          u.name as hoa_name,
-          u.email as hoa_email
-         FROM focal_nominations fn
-         JOIN agencies a ON fn.agency_id = a.id
-         JOIN users u ON fn.nominated_by = u.id
-         WHERE fn.status = 'pending'
-         ORDER BY fn.created_at ASC`,
-        (err, rows) => err ? reject(err) : resolve(rows)
-      );
-    });
+    const nominations = await allAsync<any[]>(db, 
+      `SELECT 
+        fn.id,
+        fn.nominee_email,
+        fn.nominee_name,
+        fn.nominee_position,
+        fn.status,
+        fn.comments,
+        fn.created_at,
+        fn.updated_at,
+        a.name as agency_name,
+        u.name as hoa_name,
+        u.email as hoa_email
+       FROM focal_nominations fn
+       JOIN agencies a ON fn.agency_id = a.id
+       JOIN users u ON fn.nominated_by = u.id
+       WHERE fn.status = 'pending'
+       ORDER BY fn.created_at ASC`,
+      []
+    );
 
     res.json({ nominations });
   } catch (err) {
@@ -153,10 +149,12 @@ export const getPendingNominations = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // POST /api/admin/focal-nominations/:id/approve - ACC approves nomination
+// ============================================
 export const approveNomination = async (req: Request, res: Response) => {
   const { id } = req.params;
-  const accUserId = req.session?.user?.id;
+  const accUserId = (req as any).user?.id;
   const { sendEmail = true } = req.body;
 
   if (!accUserId) {
@@ -167,18 +165,16 @@ export const approveNomination = async (req: Request, res: Response) => {
     const db = getDB();
 
     // Get nomination details
-    const nomination = await new Promise<any>((resolve, reject) => {
-      db.get(
-        `SELECT 
-          fn.*,
-          a.name as agency_name
-         FROM focal_nominations fn
-         JOIN agencies a ON fn.agency_id = a.id
-         WHERE fn.id = ? AND fn.status = 'pending'`,
-        [id],
-        (err, row) => err ? reject(err) : resolve(row)
-      );
-    });
+    const nomination = await getAsync<any>(
+      db, 
+      `SELECT 
+        fn.*,
+        a.name as agency_name
+       FROM focal_nominations fn
+       JOIN agencies a ON fn.agency_id = a.id
+       WHERE fn.id = ? AND fn.status = 'pending'`,
+      [id]
+    );
 
     if (!nomination) {
       return res.status(404).json({ error: 'Nomination not found or already processed' });
@@ -192,32 +188,26 @@ export const approveNomination = async (req: Request, res: Response) => {
     const userId = `USR_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
     const now = new Date().toISOString();
 
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `INSERT INTO users (
-          id, email, name, password_hash, role, agency_id, department, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'focal_person', ?, ?, 'active', ?, ?)`,
-        [userId, nomination.nominee_email, nomination.nominee_name, hash, 
-         nomination.agency_id, nomination.nominee_position, now, now],
-        (err) => err ? reject(err) : resolve()
-      );
-    });
+    await runAsync(db, 
+      `INSERT INTO users (
+        id, email, name, password_hash, role, agency_id, department, is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'focal_person', ?, ?, 1, ?, ?)`,
+      [userId, nomination.nominee_email, nomination.nominee_name, hash, 
+       nomination.agency_id, nomination.nominee_position, now, now]
+    );
 
     // Update nomination status
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `UPDATE focal_nominations 
-         SET status = 'approved', approved_by = ?, comments = ?, updated_at = ?
-         WHERE id = ?`,
-        [accUserId, `Approved by ACC user ${accUserId}`, now, id],
-        (err) => err ? reject(err) : resolve()
-      );
-    });
+    await runAsync(db, 
+      `UPDATE focal_nominations 
+       SET status = 'approved', approved_by = ?, comments = ?, updated_at = ?
+       WHERE id = ?`,
+      [accUserId, `Approved by ACC user ${accUserId}`, now, id]
+    );
 
     // Send email if requested
     if (sendEmail) {
-      // Note: In real implementation, you'd use your nodemailer service here
       console.log(`📧 Would send email to ${nomination.nominee_email} with temp password: ${tempPassword}`);
+      // TODO: Implement actual email sending with nodemailer
     }
 
     // Audit log
@@ -234,10 +224,12 @@ export const approveNomination = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // POST /api/admin/focal-nominations/:id/reject - ACC rejects nomination
+// ============================================
 export const rejectNomination = async (req: Request, res: Response) => {
   const { id } = req.params;
-  const accUserId = req.session?.user?.id;
+  const accUserId = (req as any).user?.id;
   const { comments } = req.body;
 
   if (!accUserId || !comments) {
@@ -246,24 +238,28 @@ export const rejectNomination = async (req: Request, res: Response) => {
 
   try {
     const db = getDB();
+    const now = new Date().toISOString();
 
     // Update nomination status
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `UPDATE focal_nominations 
-         SET status = 'rejected', approved_by = ?, comments = ?, updated_at = ?
-         WHERE id = ? AND status = 'pending'`,
-        [accUserId, comments, new Date().toISOString(), id],
-        function(err) {
-          if (err) reject(err);
-          else if (this.changes === 0) {
-            reject(new Error('Nomination not found or already processed'));
-          } else {
-            resolve();
-          }
-        }
-      );
-    });
+    const result = await runAsync(db, 
+      `UPDATE focal_nominations 
+       SET status = 'rejected', approved_by = ?, comments = ?, updated_at = ?
+       WHERE id = ? AND status = 'pending'`,
+      [accUserId, comments, now, id]
+    );
+
+    // Check if any row was updated
+    // Note: runAsync returns different structures for SQLite vs PostgreSQL
+    // We'll check by trying to get the nomination to verify it was updated
+    const updatedNomination = await getAsync<any>(
+      db,
+      'SELECT status FROM focal_nominations WHERE id = ?',
+      [id]
+    );
+
+    if (!updatedNomination || updatedNomination.status !== 'rejected') {
+      return res.status(404).json({ error: 'Nomination not found or already processed' });
+    }
 
     // Audit log
     await logAction(req, 'reject_focal_nomination', { type: 'focal_nomination', id }, { 

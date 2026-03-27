@@ -1,6 +1,6 @@
-//backend/src/controllers/assignmentController.ts
+// backend/src/controllers/assignmentController.ts
 import { Request, Response } from 'express';
-import { getDB } from '../models/db';
+import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 import { logAction } from '../services/auditService';
 
 interface Assignment {
@@ -13,39 +13,36 @@ interface Assignment {
   notes?: string;
 }
 
+// ============================================
 // GET /api/admin/assignments
+// ============================================
 export const getAssignments = async (req: Request, res: Response) => {
   try {
     const db = getDB();
     
-    const assignments = await new Promise<any[]>((resolve, reject) => {
-      db.all(`
-        SELECT 
-          a.*,
-          po.full_name as officer_name,
-          po.email as officer_email,
-          po.position as officer_position,
-          po.department as officer_department,
-          ag.name as agency_name,
-          ag.sector as agency_sector,
-          ag.agency_type,
-          ag.hoa_name,
-          ag.hoa_email,
-          ag.hoa_phone,
-          ag.focal_person_name,
-          ag.focal_person_email,
-          ag.focal_person_phone,
-          ass.full_name as assigned_by_name
-        FROM assignments a
-        LEFT JOIN users po ON a.prevention_officer_id = po.id
-        LEFT JOIN agencies ag ON a.agency_id = ag.id
-        LEFT JOIN users ass ON a.assigned_by = ass.id
-        ORDER BY a.assigned_at DESC
-      `, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    const assignments = await allAsync<any[]>(db, `
+      SELECT 
+        a.*,
+        po.name as officer_name,
+        po.email as officer_email,
+        po.position as officer_position,
+        po.department as officer_department,
+        ag.name as agency_name,
+        ag.sector as agency_sector,
+        ag.agency_type,
+        ag.hoa_name,
+        ag.hoa_email,
+        ag.hoa_phone,
+        ag.focal_person_name,
+        ag.focal_person_email,
+        ag.focal_person_phone,
+        ass.name as assigned_by_name
+      FROM assignments a
+      LEFT JOIN users po ON a.prevention_officer_id = po.id
+      LEFT JOIN agencies ag ON a.agency_id = ag.id
+      LEFT JOIN users ass ON a.assigned_by = ass.id
+      ORDER BY a.assigned_at DESC
+    `, []);
 
     res.json({ success: true, assignments });
   } catch (err) {
@@ -54,35 +51,32 @@ export const getAssignments = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // GET /api/admin/assignments/officers/:officerId
+// ============================================
 export const getOfficerAssignments = async (req: Request, res: Response) => {
   try {
     const { officerId } = req.params;
     const db = getDB();
     
-    const assignments = await new Promise<any[]>((resolve, reject) => {
-      db.all(`
-        SELECT 
-          a.*,
-          ag.name as agency_name,
-          ag.sector as agency_sector,
-          ag.agency_type,
-          ag.hoa_name,
-          ag.hoa_email,
-          ag.hoa_phone,
-          ag.focal_person_name,
-          ag.focal_person_email,
-          ag.focal_person_phone
-        FROM assignments a
-        LEFT JOIN agencies ag ON a.agency_id = ag.id
-        WHERE a.prevention_officer_id = ?
-          AND a.status = 'active'
-        ORDER BY a.assigned_at DESC
-      `, [officerId], (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    const assignments = await allAsync<any[]>(db, `
+      SELECT 
+        a.*,
+        ag.name as agency_name,
+        ag.sector as agency_sector,
+        ag.agency_type,
+        ag.hoa_name,
+        ag.hoa_email,
+        ag.hoa_phone,
+        ag.focal_person_name,
+        ag.focal_person_email,
+        ag.focal_person_phone
+      FROM assignments a
+      LEFT JOIN agencies ag ON a.agency_id = ag.id
+      WHERE a.prevention_officer_id = ?
+        AND a.status = 'active'
+      ORDER BY a.assigned_at DESC
+    `, [officerId]);
 
     res.json({ success: true, assignments });
   } catch (err) {
@@ -91,33 +85,30 @@ export const getOfficerAssignments = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/admin/assignments/available-officers - FIXED
+// ============================================
+// GET /api/admin/assignments/available-officers
+// ============================================
 export const getAvailableOfficers = async (req: Request, res: Response) => {
   try {
     const db = getDB();
     
-    const officers = await new Promise<any[]>((resolve, reject) => {
-      db.all(`
-        SELECT 
-          u.id,
-          u.full_name as name,
-          u.email,
-          u.phone,
-          u.position,
-          u.department,
-          COUNT(a.id) as assignment_count
-        FROM users u
-        LEFT JOIN assignments a ON u.id = a.prevention_officer_id 
-          AND a.status = 'active'
-        WHERE u.role = 'prevention_officer'
-          AND u.is_active = 1
-        GROUP BY u.id
-        ORDER BY u.full_name
-      `, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    const officers = await allAsync<any[]>(db, `
+      SELECT 
+        u.id,
+        u.name as name,
+        u.email,
+        u.phone,
+        u.position,
+        u.department,
+        COUNT(a.id) as assignment_count
+      FROM users u
+      LEFT JOIN assignments a ON u.id = a.prevention_officer_id 
+        AND a.status = 'active'
+      WHERE u.role = 'prevention_officer'
+        AND u.is_active = 1
+      GROUP BY u.id
+      ORDER BY u.name
+    `, []);
 
     res.json({ success: true, officers });
   } catch (err) {
@@ -126,42 +117,39 @@ export const getAvailableOfficers = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/admin/assignments/unassigned-agencies - FIXED
+// ============================================
+// GET /api/admin/assignments/unassigned-agencies
+// ============================================
 export const getUnassignedAgencies = async (req: Request, res: Response) => {
   try {
     const db = getDB();
     
-    const agencies = await new Promise<any[]>((resolve, reject) => {
-      db.all(`
-        SELECT 
-          ag.id,
-          ag.name,
-          ag.sector,
-          ag.agency_type,
-          ag.status,
-          ag.hoa_name,
-          ag.hoa_email,
-          ag.hoa_phone,
-          ag.focal_person_name,
-          ag.focal_person_email,
-          ag.focal_person_phone,
-          ag.address,
-          ag.contact_person,
-          ag.contact_email,
-          ag.contact_phone,
-          ag.created_at,
-          ag.updated_at
-        FROM agencies ag
-        WHERE ag.id NOT IN (
-          SELECT agency_id FROM assignments WHERE status = 'active'
-        )
-          AND ag.status = 'active'
-        ORDER BY ag.name
-      `, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    const agencies = await allAsync<any[]>(db, `
+      SELECT 
+        ag.id,
+        ag.name,
+        ag.sector,
+        ag.agency_type,
+        ag.status,
+        ag.hoa_name,
+        ag.hoa_email,
+        ag.hoa_phone,
+        ag.focal_person_name,
+        ag.focal_person_email,
+        ag.focal_person_phone,
+        ag.address,
+        ag.contact_person,
+        ag.contact_email,
+        ag.contact_phone,
+        ag.created_at,
+        ag.updated_at
+      FROM agencies ag
+      WHERE ag.id NOT IN (
+        SELECT agency_id FROM assignments WHERE status = 'active'
+      )
+        AND ag.status = 'active'
+      ORDER BY ag.name
+    `, []);
 
     res.json({ success: true, agencies });
   } catch (err) {
@@ -170,7 +158,9 @@ export const getUnassignedAgencies = async (req: Request, res: Response) => {
   }
 };
 
-// POST /api/admin/assignments - FIXED
+// ============================================
+// POST /api/admin/assignments
+// ============================================
 export const createAssignment = async (req: Request, res: Response) => {
   try {
     const { prevention_officer_id, agency_id, notes } = req.body;
@@ -183,19 +173,13 @@ export const createAssignment = async (req: Request, res: Response) => {
     }
 
     const db = getDB();
-    const assigned_by = req.user?.id || 'system';
+    const assigned_by = (req as any).user?.id || 'system';
     
-    // Check if officer exists and is prevention_officer - FIXED
-    const officer = await new Promise<any>((resolve, reject) => {
-      db.get(
-        'SELECT id, full_name as name FROM users WHERE id = ? AND role = ? AND is_active = ?',
-        [prevention_officer_id, 'prevention_officer', 1],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
+    // Check if officer exists and is prevention_officer
+    const officer = await getAsync<any>(db, 
+      'SELECT id, name FROM users WHERE id = ? AND role = ? AND is_active = ?',
+      [prevention_officer_id, 'prevention_officer', 1]
+    );
 
     if (!officer) {
       return res.status(400).json({ 
@@ -205,16 +189,10 @@ export const createAssignment = async (req: Request, res: Response) => {
     }
 
     // Check if agency exists
-    const agency = await new Promise<any>((resolve, reject) => {
-      db.get(
-        'SELECT id, name, hoa_name, focal_person_name FROM agencies WHERE id = ? AND status = ?',
-        [agency_id, 'active'],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
+    const agency = await getAsync<any>(db, 
+      'SELECT id, name, hoa_name, focal_person_name FROM agencies WHERE id = ? AND status = ?',
+      [agency_id, 'active']
+    );
 
     if (!agency) {
       return res.status(400).json({ 
@@ -224,16 +202,10 @@ export const createAssignment = async (req: Request, res: Response) => {
     }
 
     // Check for existing active assignment
-    const existing = await new Promise<any>((resolve, reject) => {
-      db.get(
-        'SELECT id FROM assignments WHERE prevention_officer_id = ? AND agency_id = ? AND status = ?',
-        [prevention_officer_id, agency_id, 'active'],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
+    const existing = await getAsync<any>(db, 
+      'SELECT id FROM assignments WHERE prevention_officer_id = ? AND agency_id = ? AND status = ?',
+      [prevention_officer_id, agency_id, 'active']
+    );
 
     if (existing) {
       return res.status(400).json({ 
@@ -245,30 +217,18 @@ export const createAssignment = async (req: Request, res: Response) => {
     // Create assignment
     const assignmentId = `ASSIGN_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
     
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `INSERT INTO assignments 
-         (id, prevention_officer_id, agency_id, assigned_by, notes, assigned_at, status)
-         VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'active')`,
-        [assignmentId, prevention_officer_id, agency_id, assigned_by, notes || null],
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    });
+    await runAsync(db, 
+      `INSERT INTO assignments 
+       (id, prevention_officer_id, agency_id, assigned_by, notes, assigned_at, status)
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'active')`,
+      [assignmentId, prevention_officer_id, agency_id, assigned_by, notes || null]
+    );
 
     // Update agency's assigned_officer_id
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        'UPDATE agencies SET assigned_officer_id = ? WHERE id = ?',
-        [prevention_officer_id, agency_id],
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    });
+    await runAsync(db, 
+      'UPDATE agencies SET assigned_officer_id = ? WHERE id = ?',
+      [prevention_officer_id, agency_id]
+    );
 
     // Log action
     await logAction(
@@ -305,55 +265,39 @@ export const createAssignment = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // DELETE /api/admin/assignments/:id
+// ============================================
 export const deleteAssignment = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const db = getDB();
 
     // Get assignment for audit
-    const assignment = await new Promise<any>((resolve, reject) => {
-      db.get(
-        `SELECT a.*, po.full_name as officer_name, ag.name as agency_name, ag.hoa_name, ag.focal_person_name
-         FROM assignments a
-         LEFT JOIN users po ON a.prevention_officer_id = po.id
-         LEFT JOIN agencies ag ON a.agency_id = ag.id
-         WHERE a.id = ?`,
-        [id],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
+    const assignment = await getAsync<any>(db, 
+      `SELECT a.*, po.name as officer_name, ag.name as agency_name, ag.hoa_name, ag.focal_person_name
+       FROM assignments a
+       LEFT JOIN users po ON a.prevention_officer_id = po.id
+       LEFT JOIN agencies ag ON a.agency_id = ag.id
+       WHERE a.id = ?`,
+      [id]
+    );
 
     if (!assignment) {
       return res.status(404).json({ success: false, error: 'Assignment not found' });
     }
 
     // Soft delete (update status)
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        'UPDATE assignments SET status = ? WHERE id = ?',
-        ['reassigned', id],
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    });
+    await runAsync(db, 
+      'UPDATE assignments SET status = ? WHERE id = ?',
+      ['reassigned', id]
+    );
 
     // Clear agency's assigned_officer_id
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        'UPDATE agencies SET assigned_officer_id = NULL WHERE id = ?',
-        [assignment.agency_id],
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    });
+    await runAsync(db, 
+      'UPDATE agencies SET assigned_officer_id = NULL WHERE id = ?',
+      [assignment.agency_id]
+    );
 
     // Log action
     await logAction(
@@ -377,23 +321,20 @@ export const deleteAssignment = async (req: Request, res: Response) => {
   }
 };
 
-// GET /api/admin/assignments/stats - FIXED
+// ============================================
+// GET /api/admin/assignments/stats
+// ============================================
 export const getAssignmentStats = async (req: Request, res: Response) => {
   try {
     const db = getDB();
     
-    const stats = await new Promise<any>((resolve, reject) => {
-      db.get(`
-        SELECT 
-          (SELECT COUNT(*) FROM agencies WHERE status = 'active') as total_agencies,
-          (SELECT COUNT(DISTINCT agency_id) FROM assignments WHERE status = 'active') as assigned_agencies,
-          (SELECT COUNT(DISTINCT prevention_officer_id) FROM assignments WHERE status = 'active') as active_officers,
-          (SELECT COUNT(*) FROM users WHERE role = 'prevention_officer' AND is_active = 1) as total_officers
-      `, (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+    const stats = await getAsync<any>(db, `
+      SELECT 
+        (SELECT COUNT(*) FROM agencies WHERE status = 'active') as total_agencies,
+        (SELECT COUNT(DISTINCT agency_id) FROM assignments WHERE status = 'active') as assigned_agencies,
+        (SELECT COUNT(DISTINCT prevention_officer_id) FROM assignments WHERE status = 'active') as active_officers,
+        (SELECT COUNT(*) FROM users WHERE role = 'prevention_officer' AND is_active = 1) as total_officers
+    `, []);
 
     res.json({ success: true, stats });
   } catch (err) {

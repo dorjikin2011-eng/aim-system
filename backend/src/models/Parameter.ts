@@ -25,7 +25,7 @@ export class Parameter {
   static async getByIndicatorId(indicatorId: string): Promise<ParameterDefinition[]> {
     try {
       const db = getDB();
-      const rows = await allAsync<any>(
+      const rows = await allAsync<any[]>(
         db, 
         'SELECT * FROM parameters WHERE indicator_id = ? ORDER BY display_order', 
         [indicatorId]
@@ -272,96 +272,48 @@ export class Parameter {
       );
       
       // Count by type
-      const typeResult = await allAsync<{ type: string; count: number }>(
-        db,
-        `SELECT type, COUNT(*) as count FROM parameters WHERE is_active = 1 ${indicatorId ? 'AND indicator_id = ?' : ''} GROUP BY type`,
-        values
-      );
-      
-      const byType: Record<string, number> = {};
-      typeResult.forEach(row => {
-        byType[row.type] = row.count;
-      });
-      
-      return {
-        total: totalResult?.count || 0,
-        byType,
-        active: activeResult?.count || 0,
-        inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
-      };
-    } catch (error) {
-      console.error('Error getting parameter statistics:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Validate parameter configuration
-   */
-  static async validateParameter(parameter: Partial<ParameterDefinition>): Promise<{
-    isValid: boolean;
-    errors: string[];
-    warnings: string[];
-  }> {
-    const errors: string[] = [];
-    const warnings: string[] = [];
-
-    // Basic validation
-    if (!parameter.code?.trim()) {
-      errors.push('Parameter code is required');
-    }
-
-    if (!parameter.label?.trim()) {
-      errors.push('Parameter label is required');
-    }
-
-    if (!parameter.type?.trim()) {
-      errors.push('Parameter type is required');
-    }
-
-    // Type-specific validation
-    if (parameter.type === 'select') {
-      if (!parameter.options || parameter.options.length === 0) {
-        errors.push('Select type parameters require options');
-      }
-    }
-
-    if (parameter.type === 'number') {
-      const validation = parameter.validation || {};
-      const min = validation.min;
-      const max = validation.max;
-      
-      if (min !== undefined && max !== undefined) {
-        // Convert to numbers for comparison
-        const minNum = typeof min === 'string' ? parseFloat(min) : min;
-        const maxNum = typeof max === 'string' ? parseFloat(max) : max;
+      try {
+        const typeResult = await allAsync<any[]>(
+          db,
+          `SELECT type, COUNT(*) as count FROM parameters WHERE is_active = 1 ${indicatorId ? 'AND indicator_id = ?' : ''} GROUP BY type`,
+          values
+        );
         
-        if (!isNaN(minNum) && !isNaN(maxNum) && minNum > maxNum) {
-          errors.push('Minimum value cannot be greater than maximum value');
+        const byType: Record<string, number> = {};
+        
+        // Safe iteration with array check
+        if (typeResult && Array.isArray(typeResult)) {
+          typeResult.forEach(row => {
+            if (row && row.type) {
+              byType[row.type] = row.count || 0;
+            }
+          });
         }
+        
+        return {
+          total: totalResult?.count || 0,
+          byType,
+          active: activeResult?.count || 0,
+          inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
+        };
+      } catch (error) {
+        console.error('Error getting parameter statistics:', error);
+        return {
+          total: totalResult?.count || 0,
+          byType: {},
+          active: activeResult?.count || 0,
+          inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
+        };
       }
+    } catch (error) {
+      console.error('Error in getStatistics:', error);
+      return {
+        total: 0,
+        byType: {},
+        active: 0,
+        inactive: 0
+      };
     }
-
-    // Validate UI settings if provided
-    if (parameter.uiSettings) {
-      if (parameter.uiSettings.width !== undefined) {
-        const width = parameter.uiSettings.width;
-        if (typeof width === 'string') {
-          const widthNum = parseFloat(width);
-          if (isNaN(widthNum) || widthNum < 0 || widthNum > 100) {
-            errors.push('Width must be a number between 0 and 100');
-          }
-        } else if (width < 0 || width > 100) {
-          errors.push('Width must be between 0 and 100');
-        }
-      }
-    }
-
-    return {
-      isValid: errors.length === 0,
-      errors,
-      warnings
-    };
   }
 
   /**
@@ -369,10 +321,33 @@ export class Parameter {
    */
   private static mapRowToParameter(row: any): ParameterDefinition {
     // Parse JSON fields from database
-    const options = row.options ? JSON.parse(row.options) : [];
-    const validation = row.validation ? JSON.parse(row.validation) : {};
-    const uiSettings = row.ui_settings ? JSON.parse(row.ui_settings) : {};
-    const metadata = row.metadata ? JSON.parse(row.metadata) : {};
+    let options = [];
+    try {
+      options = row.options ? JSON.parse(row.options) : [];
+    } catch (e) {
+      console.warn('Error parsing options for parameter:', row.id);
+    }
+    
+    let validation = {};
+    try {
+      validation = row.validation ? JSON.parse(row.validation) : {};
+    } catch (e) {
+      console.warn('Error parsing validation for parameter:', row.id);
+    }
+    
+    let uiSettings = {};
+    try {
+      uiSettings = row.ui_settings ? JSON.parse(row.ui_settings) : {};
+    } catch (e) {
+      console.warn('Error parsing ui_settings for parameter:', row.id);
+    }
+    
+    let metadata = {};
+    try {
+      metadata = row.metadata ? JSON.parse(row.metadata) : {};
+    } catch (e) {
+      console.warn('Error parsing metadata for parameter:', row.id);
+    }
     
     // Convert database snake_case to TypeScript camelCase
     return {
@@ -389,7 +364,6 @@ export class Parameter {
       displayOrder: row.display_order || 0,
       isActive: row.is_active === 1,
       metadata,
-      // Add these missing properties:
       scoringRuleIds: [],
       dependencies: []
     };

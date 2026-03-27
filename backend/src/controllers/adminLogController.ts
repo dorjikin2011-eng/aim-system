@@ -1,21 +1,23 @@
 // backend/src/controllers/adminLogController.ts
 import { Request, Response } from 'express';
-import { getDB } from '../models/db';
+import { getDB, getAsync, allAsync } from '../models/db';
 
+// ============================================
 // GET /api/admin/logs
+// ============================================
 export const getAuditLogs = async (req: Request, res: Response) => {
   try {
     const { action, actor, startDate, endDate } = req.query;
     const db = getDB();
 
-    // ✅ FIXED: Use actual columns that exist in audit_logs table
+    // Build query with proper column names
     let query = `
       SELECT 
         al.id,
-        al.user_id,                    -- ✅ CORRECT: user_id exists
+        al.user_id,
         al.action,
-        al.resource_type,              -- ✅ CORRECT: resource_type exists
-        al.resource_id,                -- ✅ CORRECT: resource_id exists
+        al.resource_type,
+        al.resource_id,
         al.details,
         al.ip_address,
         al.user_agent,
@@ -31,7 +33,7 @@ export const getAuditLogs = async (req: Request, res: Response) => {
       params.push(action);
     }
     
-    // Filter by actor (search in user_id) - ✅ FIXED
+    // Filter by actor (search in user_id)
     if (actor) {
       query += ' AND al.user_id LIKE ?';
       params.push(`%${actor}%`);
@@ -53,14 +55,9 @@ export const getAuditLogs = async (req: Request, res: Response) => {
 
     query += ' ORDER BY al.created_at DESC LIMIT 500';
 
-    const logs = await new Promise<any[]>((resolve, reject) => {
-      db.all(query, params, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    const logs = await allAsync<any[]>(db, query, params);
 
-    // ✅ FIXED: Format with correct field names
+    // Format logs for frontend
     const formattedLogs = logs.map(log => {
       let details = {};
       try {
@@ -71,10 +68,10 @@ export const getAuditLogs = async (req: Request, res: Response) => {
 
       return {
         id: log.id,
-        actor_id: log.user_id,                    // ✅ Map user_id to actor_id for frontend
-        actor_email: log.user_id || 'Unknown',    // ✅ Use user_id as email
-        actor_name: log.user_id || 'Unknown',     // ✅ Use user_id as name
-        actor_role: 'Unknown',                    // ✅ Not available in table
+        actor_id: log.user_id,
+        actor_email: log.user_id || 'Unknown',
+        actor_name: log.user_id || 'Unknown',
+        actor_role: 'Unknown',
         action: log.action,
         action_type: log.action,
         target_type: log.resource_type || 'Unknown',
@@ -102,17 +99,19 @@ export const getAuditLogs = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // GET /api/admin/logs/export
+// ============================================
 export const exportAuditLogs = async (req: Request, res: Response) => {
   try {
     const { action, actor, startDate, endDate } = req.query;
     const db = getDB();
 
-    // ✅ FIXED: Use correct column names
+    // Build query with correct column names
     let query = `
       SELECT 
         al.created_at as "Timestamp",
-        al.user_id as "Actor Email",        -- ✅ CORRECT
+        al.user_id as "Actor Email",
         al.action as "Action",
         al.resource_type as "Target Type",
         al.resource_id as "Target ID",
@@ -130,30 +129,25 @@ export const exportAuditLogs = async (req: Request, res: Response) => {
     }
     
     if (actor) { 
-      query += ' AND al.user_id LIKE ?';  // ✅ CORRECT
+      query += ' AND al.user_id LIKE ?';
       params.push(`%${actor}%`);
     }
     
     if (startDate) { 
-      query += ' AND al.created_at >= ?';  // ✅ CORRECT
+      query += ' AND al.created_at >= ?';
       params.push(new Date(startDate as string).toISOString()); 
     }
     
     if (endDate) { 
       const end = new Date(endDate as string);
       end.setHours(23, 59, 59, 999);
-      query += ' AND al.created_at <= ?';  // ✅ CORRECT
+      query += ' AND al.created_at <= ?';
       params.push(end.toISOString()); 
     }
 
-    query += ' ORDER BY al.created_at DESC';  // ✅ CORRECT
+    query += ' ORDER BY al.created_at DESC';
 
-    const logs = await new Promise<any[]>((resolve, reject) => {
-      db.all(query, params, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    const logs = await allAsync<any[]>(db, query, params);
 
     // Generate CSV content
     let csvContent = '';
@@ -205,64 +199,50 @@ export const exportAuditLogs = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // GET /api/admin/logs/stats
+// ============================================
 export const getAuditLogStats = async (req: Request, res: Response) => {
   try {
     const db = getDB();
 
     // Get total count
-    const totalCount = await new Promise<number>((resolve, reject) => {
-      db.get('SELECT COUNT(*) as count FROM audit_logs', (err, row: any) => {
-        if (err) reject(err);
-        else resolve(row.count);
-      });
-    });
+    const totalCountResult = await getAsync<{ count: number }>(db, 
+      'SELECT COUNT(*) as count FROM audit_logs'
+    );
+    const totalCount = totalCountResult?.count || 0;
 
-    // Get actions by type - ✅ FIXED: Use correct column names
-    const actionsByType = await new Promise<any[]>((resolve, reject) => {
-      db.all(`
-        SELECT action, COUNT(*) as count 
-        FROM audit_logs 
-        GROUP BY action 
-        ORDER BY count DESC
-      `, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    // Get actions by type
+    const actionsByType = await allAsync<any[]>(db, `
+      SELECT action, COUNT(*) as count 
+      FROM audit_logs 
+      GROUP BY action 
+      ORDER BY count DESC
+    `, []);
 
-    // Get top actors - ✅ FIXED: Use user_id
-    const topActors = await new Promise<any[]>((resolve, reject) => {
-      db.all(`
-        SELECT 
-          al.user_id as email,
-          al.user_id as name,
-          COUNT(al.id) as action_count
-        FROM audit_logs al
-        GROUP BY al.user_id
-        ORDER BY action_count DESC
-        LIMIT 10
-      `, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    // Get top actors (using user_id)
+    const topActors = await allAsync<any[]>(db, `
+      SELECT 
+        al.user_id as email,
+        al.user_id as name,
+        COUNT(al.id) as action_count
+      FROM audit_logs al
+      WHERE al.user_id IS NOT NULL AND al.user_id != ''
+      GROUP BY al.user_id
+      ORDER BY action_count DESC
+      LIMIT 10
+    `, []);
 
-    // Get recent activity (last 7 days) - ✅ FIXED: Use created_at
-    const recentActivity = await new Promise<any[]>((resolve, reject) => {
-      db.all(`
-        SELECT 
-          DATE(al.created_at) as date,
-          COUNT(*) as count
-        FROM audit_logs al
-        WHERE al.created_at >= DATE('now', '-7 days')
-        GROUP BY DATE(al.created_at)
-        ORDER BY date DESC
-      `, (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows);
-      });
-    });
+    // Get recent activity (last 7 days)
+    const recentActivity = await allAsync<any[]>(db, `
+      SELECT 
+        DATE(al.created_at) as date,
+        COUNT(*) as count
+      FROM audit_logs al
+      WHERE al.created_at >= datetime('now', '-7 days')
+      GROUP BY DATE(al.created_at)
+      ORDER BY date DESC
+    `, []);
 
     res.json({
       success: true,
@@ -283,23 +263,28 @@ export const getAuditLogStats = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // GET /api/admin/logs/:id
+// ============================================
 export const getAuditLogById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const db = getDB();
 
-    const log = await new Promise<any>((resolve, reject) => {
-      db.get(`
-        SELECT 
-          al.*
-        FROM audit_logs al
-        WHERE al.id = ?
-      `, [id], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+    const log = await getAsync<any>(db, `
+      SELECT 
+        al.id,
+        al.user_id,
+        al.action,
+        al.resource_type,
+        al.resource_id,
+        al.details,
+        al.ip_address,
+        al.user_agent,
+        al.created_at
+      FROM audit_logs al
+      WHERE al.id = ?
+    `, [id]);
 
     if (!log) {
       return res.status(404).json({
@@ -309,9 +294,10 @@ export const getAuditLogById = async (req: Request, res: Response) => {
     }
 
     // Parse details if it's a JSON string
-    if (log.details && typeof log.details === 'string') {
+    let details = log.details;
+    if (details && typeof details === 'string') {
       try {
-        log.details = JSON.parse(log.details);
+        details = JSON.parse(details);
       } catch {
         // Keep as string if not valid JSON
       }
@@ -321,7 +307,7 @@ export const getAuditLogById = async (req: Request, res: Response) => {
       success: true,
       log: {
         id: log.id,
-        actor_id: log.user_id,           // ✅ Map user_id to actor_id
+        actor_id: log.user_id,
         actor_email: log.user_id || 'Unknown',
         actor_name: log.user_id || 'Unknown',
         actor_role: 'Unknown',
@@ -330,7 +316,7 @@ export const getAuditLogById = async (req: Request, res: Response) => {
         target_type: log.resource_type || 'Unknown',
         target_id: log.resource_id || 'Unknown',
         target_name: log.resource_type || 'Unknown',
-        details: log.details,
+        details: details,
         created_at: log.created_at,
         ip_address: log.ip_address,
         user_agent: log.user_agent

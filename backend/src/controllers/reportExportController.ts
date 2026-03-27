@@ -1,11 +1,11 @@
 // backend/src/controllers/reportExportController.ts
 import { Request, Response } from 'express';
-import { getDB } from '../models/db';
+import { getDB, getAsync, allAsync } from '../models/db';
 import ExcelJS from 'exceljs';
-import { createWriteStream } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
 
+// ============================================
+// GET /api/reports/export/excel
+// ============================================
 export const exportReportToExcel = async (req: Request, res: Response) => {
   try {
     const { fiscal_year } = req.query;
@@ -13,36 +13,52 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
     const targetFiscalYear = fiscal_year || '2025-26';
 
     // Fetch all active indicators
-    const indicators = await new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT id, code, name, category, weight, maxScore 
-         FROM indicators 
-         WHERE is_active = 1 
-         ORDER BY display_order, category`,
-        (err, rows) => (err ? reject(err) : resolve(rows || []))
-      );
-    });
+    const indicators = await allAsync<any[]>(db, 
+      `SELECT id, code, name, category, weight, max_score as maxScore 
+       FROM indicators 
+       WHERE is_active = 1 
+       ORDER BY display_order, category`,
+      []
+    );
 
     // Get category groupings
     const categories = Array.from(new Set(indicators.map(ind => ind.category)));
 
-    // Fetch system thresholds
-    const thresholds = await new Promise<any>((resolve, reject) => {
-      db.get(
-        `SELECT 
-          MAX(CASE WHEN config_key = 'high_integrity_min' THEN config_value END) as high,
-          MAX(CASE WHEN config_key = 'medium_integrity_min' THEN config_value END) as medium
-         FROM system_config`,
-        (err, row) => (err ? reject(err) : resolve(row || {}))
+    // Fetch system thresholds from system_config
+    let highThreshold = 80;
+    let mediumThreshold = 50;
+    
+    try {
+      const highConfig = await getAsync<any>(
+        db,
+        `SELECT config_value FROM system_config WHERE config_key = 'integrity.threshold.high'`,
+        []
       );
-    });
+      if (highConfig && highConfig.config_value) {
+        highThreshold = Number(highConfig.config_value);
+      }
+      
+      const mediumConfig = await getAsync<any>(
+        db,
+        `SELECT config_value FROM system_config WHERE config_key = 'integrity.threshold.medium'`,
+        []
+      );
+      if (mediumConfig && mediumConfig.config_value) {
+        mediumThreshold = Number(mediumConfig.config_value);
+      }
+    } catch (error) {
+      console.warn('Could not fetch thresholds from system_config, using defaults:', error);
+    }
 
     // Fetch agency data with dynamic indicators
-    const agenciesQuery = `
-      SELECT 
-        a.id, a.name AS agency, a.sector,
-        a.contact_email, a.contact_phone,
-        GROUP_CONCAT(DISTINCT i.id || ':' || COALESCE(id.score, 0)) as indicator_scores,
+    const agencies = await allAsync<any[]>(db, 
+      `SELECT 
+        a.id, 
+        a.name AS agency, 
+        a.sector,
+        a.contact_email, 
+        a.contact_phone,
+        a.status,
         SUM(id.score) as total_score,
         SUM(i.weight) as max_score
       FROM agencies a
@@ -51,14 +67,36 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
         AND id.status = 'final'
       LEFT JOIN indicators i ON id.indicator_id = i.id AND i.is_active = 1
       WHERE a.status = 'active'
-      GROUP BY a.id, a.name, a.sector, a.contact_email, a.contact_phone
-      ORDER BY total_score DESC`;
+      GROUP BY a.id, a.name, a.sector, a.contact_email, a.contact_phone, a.status
+      ORDER BY total_score DESC`,
+      [targetFiscalYear]
+    );
 
-    const agencies = await new Promise<any[]>((resolve, reject) => {
-      db.all(agenciesQuery, [targetFiscalYear], (err, rows) => {
-        if (err) return reject(err);
-        resolve(rows || []);
-      });
+    // Fetch individual indicator scores for each agency
+    const indicatorScores = await allAsync<any[]>(db,
+      `SELECT 
+        a.id as agency_id,
+        a.name as agency_name,
+        i.id as indicator_id,
+        i.code as indicator_code,
+        id.score
+      FROM agencies a
+      CROSS JOIN indicators i
+      LEFT JOIN indicator_data id ON a.id = id.agency_id 
+        AND id.indicator_id = i.id
+        AND id.fiscal_year = ?
+        AND id.status = 'final'
+      WHERE a.status = 'active'
+        AND i.is_active = 1
+      ORDER BY a.name, i.display_order`,
+      [targetFiscalYear]
+    );
+
+    // Create a map of agency scores
+    const scoreMap = new Map();
+    indicatorScores.forEach(score => {
+      const key = `${score.agency_id}_${score.indicator_id}`;
+      scoreMap.set(key, score.score || 0);
     });
 
     // Create workbook
@@ -80,13 +118,23 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
       { label: 'Total Agencies', value: agencies.length },
       { label: 'Total Indicators', value: indicators.length },
       { label: 'Categories', value: categories.join(', ') },
-      { label: 'High Integrity Threshold', value: `${thresholds.high || 80}%` },
-      { label: 'Medium Integrity Threshold', value: `${thresholds.medium || 50}%` },
+      { label: 'High Integrity Threshold', value: `${highThreshold}%` },
+      { label: 'Medium Integrity Threshold', value: `${mediumThreshold}%` },
       { label: 'Generated On', value: new Date().toLocaleString() },
       { label: 'Generated By', value: 'AIMS System' }
     ];
 
     summaryData.forEach(row => summarySheet.addRow(row));
+
+    // Style summary sheet header
+    summarySheet.getRow(1).eachCell(cell => {
+      cell.font = { bold: true };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E7FF' }
+      };
+    });
 
     // Sheet 2: Indicators Configuration
     const configSheet = workbook.addWorksheet('Indicators');
@@ -103,9 +151,19 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
         code: ind.code || '',
         name: ind.name,
         category: ind.category,
-        weight: `${ind.weight}%`,
-        maxScore: ind.maxScore
+        weight: `${ind.weight || 0}%`,
+        maxScore: ind.maxScore || 100
       });
+    });
+
+    // Style config sheet header
+    configSheet.getRow(1).eachCell(cell => {
+      cell.font = { bold: true };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E7FF' }
+      };
     });
 
     // Sheet 3: Agency Scores (main sheet)
@@ -114,7 +172,8 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
     // Build dynamic columns
     const scoreColumns: any[] = [
       { header: 'Agency', key: 'agency', width: 25 },
-      { header: 'Sector', key: 'sector', width: 15 }
+      { header: 'Sector', key: 'sector', width: 15 },
+      { header: 'Status', key: 'status', width: 12 }
     ];
 
     // Add category subtotals columns
@@ -122,12 +181,12 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
       scoreColumns.push({
         header: `${category.replace('_', ' ')} Score`,
         key: `${category}_score`,
-        width: 15
+        width: 18
       });
       scoreColumns.push({
         header: `${category.replace('_', ' ')} %`,
         key: `${category}_percent`,
-        width: 12
+        width: 15
       });
     });
 
@@ -143,37 +202,37 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
 
     scoresSheet.columns = scoreColumns;
 
+    // Group indicators by category
+    const indicatorsByCategory: Record<string, any[]> = {};
+    indicators.forEach(ind => {
+      if (!indicatorsByCategory[ind.category]) {
+        indicatorsByCategory[ind.category] = [];
+      }
+      indicatorsByCategory[ind.category].push(ind);
+    });
+
     // Process each agency
     agencies.forEach(agencyRow => {
       const agencyData: any = {
         agency: agencyRow.agency,
         sector: agencyRow.sector,
+        status: agencyRow.status === 'active' ? 'Active' : agencyRow.status,
         email: agencyRow.contact_email || '',
         phone: agencyRow.contact_phone || ''
       };
 
-      // Parse indicator scores
-      const scoreMap = new Map();
-      if (agencyRow.indicator_scores) {
-        agencyRow.indicator_scores.split(',').forEach((pair: string) => {
-          const [indId, score] = pair.split(':');
-          scoreMap.set(indId, parseFloat(score));
-        });
-      }
-
       // Calculate category scores
       const categoryTotals: Record<string, { score: number; max: number }> = {};
       
-      indicators.forEach(indicator => {
-        const score = scoreMap.get(indicator.id) || 0;
-        const max = indicator.maxScore || 0;
+      for (const [category, inds] of Object.entries(indicatorsByCategory)) {
+        categoryTotals[category] = { score: 0, max: 0 };
         
-        if (!categoryTotals[indicator.category]) {
-          categoryTotals[indicator.category] = { score: 0, max: 0 };
+        for (const indicator of inds) {
+          const score = scoreMap.get(`${agencyRow.id}_${indicator.id}`) || 0;
+          categoryTotals[category].score += score;
+          categoryTotals[category].max += indicator.maxScore || 100;
         }
-        categoryTotals[indicator.category].score += score;
-        categoryTotals[indicator.category].max += max;
-      });
+      }
 
       // Add category data to row
       categories.forEach(category => {
@@ -181,12 +240,12 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
         agencyData[`${category}_score`] = catData.score.toFixed(1);
         agencyData[`${category}_percent`] = catData.max > 0 
           ? `${((catData.score / catData.max) * 100).toFixed(1)}%` 
-          : 'N/A';
+          : '0%';
       });
 
       // Overall scores
       const totalScore = parseFloat(agencyRow.total_score) || 0;
-      const maxScore = parseFloat(agencyRow.max_score) || indicators.reduce((sum, ind) => sum + (ind.maxScore || 0), 0);
+      const maxScore = parseFloat(agencyRow.max_score) || indicators.reduce((sum, ind) => sum + (ind.maxScore || 100), 0);
       const percentage = maxScore > 0 ? (totalScore / maxScore) * 100 : 0;
       
       agencyData.total_score = totalScore.toFixed(1);
@@ -194,9 +253,6 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
       agencyData.percentage = `${percentage.toFixed(1)}%`;
 
       // Determine integrity level
-      const highThreshold = thresholds.high ? Number(thresholds.high) : 80;
-      const mediumThreshold = thresholds.medium ? Number(thresholds.medium) : 50;
-      
       if (percentage >= highThreshold) {
         agencyData.level = 'Strong Integrity Culture';
       } else if (percentage >= mediumThreshold) {
@@ -208,8 +264,18 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
       scoresSheet.addRow(agencyData);
     });
 
-    // Sheet 4: Detailed Indicator Scores (if needed)
-    if (indicators.length <= 20) { // Only create if manageable number of indicators
+    // Style scores sheet header
+    scoresSheet.getRow(1).eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF4F46E5' }
+      };
+    });
+
+    // Sheet 4: Detailed Indicator Scores (if manageable number of indicators)
+    if (indicators.length <= 20) {
       const detailSheet = workbook.addWorksheet('Detailed Scores');
       const detailColumns: any[] = [
         { header: 'Agency', key: 'agency', width: 25 },
@@ -237,52 +303,47 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
           sector: agencyRow.sector
         };
 
-        // Parse indicator scores
-        const scoreMap = new Map();
-        if (agencyRow.indicator_scores) {
-          agencyRow.indicator_scores.split(',').forEach((pair: string) => {
-            const [indId, score] = pair.split(':');
-            scoreMap.set(indId, parseFloat(score));
-          });
-        }
-
         let total = 0;
         indicators.forEach(ind => {
-          const score = scoreMap.get(ind.id) || 0;
+          const score = scoreMap.get(`${agencyRow.id}_${ind.id}`) || 0;
           detailRow[`ind_${ind.id}`] = score.toFixed(1);
           total += score;
         });
 
+        const totalMaxScore = indicators.reduce((sum, ind) => sum + (ind.maxScore || 100), 0);
         detailRow.total = total.toFixed(1);
-        detailRow.percent = `${(total / indicators.reduce((sum, i) => sum + (i.maxScore || 0), 0) * 100).toFixed(1)}%`;
+        detailRow.percent = totalMaxScore > 0 ? `${((total / totalMaxScore) * 100).toFixed(1)}%` : '0%';
         
         detailSheet.addRow(detailRow);
       });
+
+      // Style detail sheet header
+      detailSheet.getRow(1).eachCell(cell => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF4F46E5' }
+        };
+      });
     }
 
-    // Apply styling
-    [summarySheet, configSheet, scoresSheet].forEach((sheet, index) => {
-      if (sheet.columns) {
-        sheet.getRow(1).eachCell(cell => {
-          cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
-        });
-      }
-    });
-
-    // Generate temp file
-    const tempPath = join(tmpdir(), `AIMS_Report_${targetFiscalYear}_${Date.now()}.xlsx`);
-    await workbook.xlsx.writeFile(tempPath);
-
-    // Send file
+    // Generate buffer and send directly
+    const buffer = await workbook.xlsx.writeBuffer();
+    
+    // Set response headers
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="AIMS_Report_${targetFiscalYear}.xlsx"`);
     
-    const stream = createWriteStream(tempPath);
-    stream.pipe(res);
+    // Send buffer - buffer is a Buffer object, we can send it directly
+    // Express automatically handles Buffer objects
+    res.send(buffer);
     
-  } catch (err: any) {
+  } catch (err) {
     console.error('Excel export error:', err);
-    res.status(500).json({ error: 'Failed to generate Excel report' });
+    res.status(500).json({ 
+      error: 'Failed to generate Excel report',
+      details: err instanceof Error ? err.message : 'Unknown error'
+    });
   }
 };

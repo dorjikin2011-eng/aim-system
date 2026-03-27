@@ -170,7 +170,7 @@ export async function getAsync<T>(db: sqlite3.Database | Pool, sql: string, para
 }
 
 // Get multiple rows
-export async function allAsync<T>(db: sqlite3.Database | Pool, sql: string, params: any[] = []): Promise<T[]> {
+export async function allAsync<T = any>(db: sqlite3.Database | Pool, sql: string, params: any[] = []): Promise<T> {
   if (db instanceof Pool) {
     // PostgreSQL
     const client = await db.connect();
@@ -187,7 +187,7 @@ export async function allAsync<T>(db: sqlite3.Database | Pool, sql: string, para
       pgSql = pgSql.replace(/DATETIME\(/gi, 'TIMESTAMP(');
       
       const result = await client.query(pgSql, params);
-      return result.rows as T[];
+      return result.rows as T;
     } finally {
       client.release();
     }
@@ -196,7 +196,7 @@ export async function allAsync<T>(db: sqlite3.Database | Pool, sql: string, para
     return new Promise((resolve, reject) => {
       db.all(sql, params, (err, rows) => {
         if (err) reject(err);
-        else resolve(rows as T[]);
+        else resolve(rows as T);
       });
     });
   }

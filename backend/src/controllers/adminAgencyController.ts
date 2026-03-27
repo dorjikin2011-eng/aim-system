@@ -1,30 +1,31 @@
-//backend/src/controllers/adminAgencyController.ts
+// backend/src/controllers/adminAgencyController.ts
 import { Request, Response } from 'express';
-import { getDB } from '../models/db';
+import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 import { logAction } from '../services/auditService';
 import nodemailer from 'nodemailer';
 
-// ADD THIS NEW FUNCTION AT THE TOP OF THE FILE
+// Frontend URL configuration
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://frontend-alpha-nine-65.vercel.app';
+const LOGIN_URL = `${FRONTEND_URL}/login`;
+
+// ============================================
+// GET /api/admin/agencies/:id
+// ============================================
 export const getAgencyById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const db = getDB();
 
-    const agency = await new Promise<any>((resolve, reject) => {
-      db.get(`
-        SELECT 
-          id, name, sector, agency_type, status,
-          hoa_name, hoa_email, hoa_phone,
-          focal_person_name, focal_person_email, focal_person_phone,
-          contact_person, contact_email, contact_phone,
-          address, created_at, updated_at
-        FROM agencies
-        WHERE id = ?
-      `, [id], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+    const agency = await getAsync<any>(db, `
+      SELECT 
+        id, name, sector, agency_type, status,
+        hoa_name, hoa_email, hoa_phone,
+        focal_person_name, focal_person_email, focal_person_phone,
+        contact_person, contact_email, contact_phone,
+        address, created_at, updated_at
+      FROM agencies
+      WHERE id = ?
+    `, [id]);
 
     if (!agency) {
       return res.status(404).json({ 
@@ -51,35 +52,42 @@ export const getPotentialHOAs = async (req: Request, res: Response) => {
   try {
     const db = getDB();
     
-    const users = await new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT 
-          u.id,
-          u.email,
-          u.name,
-          u.role,
-          u.phone,
-          u.position,
-          a.name as current_agency,
-          u.created_at
-        FROM users u
-        LEFT JOIN agencies a ON u.agency_id = a.id
-        WHERE u.role IN ('agency_head', 'focal_person', 'prevention_officer', 'commissioner', 'director')
-          AND u.is_active = 1  -- FIXED: Changed from status = 'active' to is_active = 1
-          AND u.id NOT IN (
-            SELECT hoa_user_id FROM agencies WHERE hoa_user_id IS NOT NULL
-          )
-        ORDER BY u.name`,
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
+    // Define the expected user type
+    interface PotentialHOA {
+      id: string;
+      email: string;
+      name: string;
+      role: string;
+      phone: string | null;
+      position: string | null;
+      current_agency: string | null;
+      created_at: string;
+    }
+    
+    const users = await allAsync<PotentialHOA[]>(db, 
+      `SELECT 
+        u.id,
+        u.email,
+        u.name,
+        u.role,
+        u.phone,
+        u.position,
+        a.name as current_agency,
+        u.created_at
+      FROM users u
+      LEFT JOIN agencies a ON u.agency_id = a.id
+      WHERE u.role IN ('agency_head', 'focal_person', 'prevention_officer', 'commissioner', 'director')
+        AND u.is_active = 1
+        AND u.id NOT IN (
+          SELECT hoa_user_id FROM agencies WHERE hoa_user_id IS NOT NULL
+        )
+      ORDER BY u.name`,
+      []
+    );
     
     res.json({
       success: true,
-      users: users.map(user => ({
+      users: users.map((user: PotentialHOA) => ({
         id: user.id,
         email: user.email,
         name: user.name,
@@ -103,7 +111,6 @@ export const getPotentialHOAs = async (req: Request, res: Response) => {
 // Email Service Configuration with Debugging
 // ============================================
 const createTransporter = () => {
-  // Log SMTP configuration for debugging
   console.log('[EMAIL DEBUG] SMTP Configuration:', {
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT,
@@ -111,14 +118,13 @@ const createTransporter = () => {
     user: process.env.SMTP_USER ? '****' + process.env.SMTP_USER.slice(-4) : 'Not set',
     hasPassword: !!process.env.SMTP_PASSWORD,
     fromEmail: process.env.SMTP_FROM_EMAIL,
-    frontendUrl: process.env.FRONTEND_URL,
+    frontendUrl: FRONTEND_URL,
+    loginUrl: LOGIN_URL,
     nodeEnv: process.env.NODE_ENV
   });
 
   if (!process.env.SMTP_PASSWORD) {
     console.error('[EMAIL ERROR] SMTP_PASSWORD is not set in environment variables');
-    console.error('[EMAIL ERROR] For Google Workspace, you need an App Password');
-    console.error('[EMAIL ERROR] Generate one at: https://myaccount.google.com/apppasswords');
   }
 
   return nodemailer.createTransport({
@@ -278,7 +284,7 @@ const getNewUserEmailTemplate = (hoaName: string, agencyName: string, email: str
 };
 
 // ============================================
-// Email Sending Function with Consistent Response
+// Email Sending Function
 // ============================================
 const sendHoaNotification = async (
   hoa: any, 
@@ -294,17 +300,15 @@ const sendHoaNotification = async (
 }> => {
   try {
     const transporter = createTransporter();
-    const loginUrl = process.env.FRONTEND_URL || 'https://your-system-url.com/login';
+    const loginUrl = LOGIN_URL;
     
     let subject = '';
     let htmlContent = '';
     
     if (useExistingUser && !isNewUser) {
-      // Existing user being promoted to HoA
       subject = `Appointment: Head of Agency for ${agencyName}`;
       htmlContent = getExistingUserEmailTemplate(hoa.name, agencyName, loginUrl);
     } else {
-      // New user created as HoA
       subject = `Welcome: Head of Agency Account for ${agencyName}`;
       htmlContent = getNewUserEmailTemplate(
         hoa.name, 
@@ -344,13 +348,11 @@ const sendHoaNotification = async (
 
 // ============================================
 // POST /api/admin/agencies/create-with-hoa
-// Create Agency with Head of Agency (Wizard)
 // ============================================
 export const createAgencyWithHOA = async (req: Request, res: Response) => {
-  let transactionCompleted = false;
+  const db = getDB();
   
   try {
-    // Default to TRUE for real-world testing
     const { agency, hoa, useExistingUser, sendEmailNotification = true } = req.body;
 
     // Validation
@@ -375,37 +377,18 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
       });
     }
 
-    const db = getDB();
-    
-    // Use transaction for atomic operations
-    await new Promise<void>((resolve, reject) => {
-      db.run('BEGIN TRANSACTION', (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
+    // Start transaction
+    await runAsync(db, 'BEGIN TRANSACTION');
 
     try {
       // Step 1: Check if agency already exists
-      const existingAgency = await new Promise<any>((resolve, reject) => {
-        db.get(
-          'SELECT id FROM agencies WHERE LOWER(name) = LOWER(?) OR LOWER(contact_email) = LOWER(?)',
-          [agency.name.trim(), agency.contactEmail.trim()],
-          (err, row) => {
-            if (err) reject(err);
-            else resolve(row);
-          }
-        );
-      });
+      const existingAgency = await getAsync<any>(db, 
+        'SELECT id FROM agencies WHERE LOWER(name) = LOWER(?) OR LOWER(contact_email) = LOWER(?)',
+        [agency.name.trim(), agency.contactEmail.trim()]
+      );
       
       if (existingAgency) {
-        await new Promise<void>((resolve, reject) => {
-          db.run('ROLLBACK', (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
-        });
-        transactionCompleted = true;
+        await runAsync(db, 'ROLLBACK');
         return res.status(400).json({ 
           success: false, 
           error: 'Agency with this name or contact email already exists' 
@@ -419,26 +402,14 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
 
       if (useExistingUser && hoa.existingUserId) {
         // Case 1: Assign existing user as HoA
-        const existingUser = await new Promise<any>((resolve, reject) => {
-          db.get(
-            `SELECT id, role, email, name FROM users 
-             WHERE id = ? AND is_active = 1`,
-            [hoa.existingUserId],
-            (err, row) => {
-              if (err) reject(err);
-              else resolve(row);
-            }
-          );
-        });
+        const existingUser = await getAsync<any>(db, 
+          `SELECT id, role, email, name FROM users 
+           WHERE id = ? AND is_active = 1`,
+          [hoa.existingUserId]
+        );
 
         if (!existingUser) {
-          await new Promise<void>((resolve, reject) => {
-            db.run('ROLLBACK', (err) => {
-              if (err) reject(err);
-              else resolve();
-            });
-          });
-          transactionCompleted = true;
+          await runAsync(db, 'ROLLBACK');
           return res.status(400).json({ 
             success: false, 
             error: 'Selected user not found or inactive' 
@@ -446,25 +417,13 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         }
 
         // Check if user is already HoA elsewhere
-        const isAlreadyHoA = await new Promise<any>((resolve, reject) => {
-          db.get(
-            'SELECT id FROM agencies WHERE hoa_user_id = ?',
-            [hoa.existingUserId],
-            (err, row) => {
-              if (err) reject(err);
-              else resolve(row);
-            }
-          );
-        });
+        const isAlreadyHoA = await getAsync<any>(db, 
+          'SELECT id FROM agencies WHERE hoa_user_id = ?',
+          [hoa.existingUserId]
+        );
 
         if (isAlreadyHoA) {
-          await new Promise<void>((resolve, reject) => {
-            db.run('ROLLBACK', (err) => {
-              if (err) reject(err);
-              else resolve();
-            });
-          });
-          transactionCompleted = true;
+          await runAsync(db, 'ROLLBACK');
           return res.status(400).json({ 
             success: false, 
             error: 'This user is already Head of Agency for another agency' 
@@ -473,44 +432,25 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
 
         hoaUserId = hoa.existingUserId;
 
-        // Update user's role to agency_head and clear agency_id
-        await new Promise<void>((resolve, reject) => {
-          db.run(
-            `UPDATE users SET 
-              role = 'agency_head', 
-              agency_id = NULL,
-              updated_at = CURRENT_TIMESTAMP 
-             WHERE id = ?`,
-            [hoaUserId],
-            (err) => {
-              if (err) reject(err);
-              else resolve();
-            }
-          );
-        });
+        // Update user's role to agency_head
+        await runAsync(db, 
+          `UPDATE users SET 
+            role = 'agency_head', 
+            agency_id = NULL,
+            updated_at = CURRENT_TIMESTAMP 
+           WHERE id = ?`,
+          [hoaUserId]
+        );
 
       } else {
         // Case 2: Create new HoA user
-        // Check if email already exists
-        const existingEmail = await new Promise<any>((resolve, reject) => {
-          db.get(
-            'SELECT id FROM users WHERE LOWER(email) = LOWER(?)',
-            [hoa.email.trim()],
-            (err, row) => {
-              if (err) reject(err);
-              else resolve(row);
-            }
-          );
-        });
+        const existingEmail = await getAsync<any>(db, 
+          'SELECT id FROM users WHERE LOWER(email) = LOWER(?)',
+          [hoa.email.trim()]
+        );
 
         if (existingEmail) {
-          await new Promise<void>((resolve, reject) => {
-            db.run('ROLLBACK', (err) => {
-              if (err) reject(err);
-              else resolve();
-            });
-          });
-          transactionCompleted = true;
+          await runAsync(db, 'ROLLBACK');
           return res.status(400).json({ 
             success: false, 
             error: 'User with this email already exists' 
@@ -520,32 +460,23 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         // Generate temporary password
         tempPassword = generateTemporaryPassword();
         
-        // Create new user (In production, hash the password)
+        // Create new user
         const userId = `USR_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+        const passwordHash = tempPassword; // In production, hash this!
         
-        // TEMPORARY: Store plain text for testing
-        // In production: const passwordHash = await hashPassword(tempPassword);
-        const passwordHash = tempPassword;
-        
-        await new Promise<void>((resolve, reject) => {
-          db.run(
-            `INSERT INTO users 
-             (id, email, name, role, phone, position, password_hash, is_active, created_at)
-             VALUES (?, ?, ?, 'agency_head', ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
-            [
-              userId,
-              hoa.email.trim(),
-              hoa.name.trim(),
-              hoa.phone?.trim() || null,
-              hoa.position?.trim() || null,
-              passwordHash
-            ],
-            (err) => {
-              if (err) reject(err);
-              else resolve();
-            }
-          );
-        });
+        await runAsync(db, 
+          `INSERT INTO users 
+           (id, email, name, role, phone, position, password_hash, is_active, created_at)
+           VALUES (?, ?, ?, 'agency_head', ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+          [
+            userId,
+            hoa.email.trim(),
+            hoa.name.trim(),
+            hoa.phone?.trim() || null,
+            hoa.position?.trim() || null,
+            passwordHash
+          ]
+        );
 
         hoaUserId = userId;
         isNewUser = true;
@@ -554,42 +485,30 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
       // Step 3: Create the agency
       const agencyId = `AGY_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
       
-      await new Promise<void>((resolve, reject) => {
-        db.run(
-          `INSERT INTO agencies 
-           (id, name, sector, contact_email, contact_phone, address, website, 
-            hoa_user_id, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP)`,
-          [
-            agencyId,
-            agency.name.trim(),
-            agency.sector.trim(),
-            agency.contactEmail.trim(),
-            agency.contactPhone?.trim() || null,
-            agency.address?.trim() || null,
-            agency.website?.trim() || null,
-            hoaUserId
-          ],
-          (err) => {
-            if (err) reject(err);
-            else resolve();
-          }
-        );
-      });
+      await runAsync(db, 
+        `INSERT INTO agencies 
+         (id, name, sector, contact_email, contact_phone, address, website, 
+          hoa_user_id, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP)`,
+        [
+          agencyId,
+          agency.name.trim(),
+          agency.sector.trim(),
+          agency.contactEmail.trim(),
+          agency.contactPhone?.trim() || null,
+          agency.address?.trim() || null,
+          agency.website?.trim() || null,
+          hoaUserId
+        ]
+      );
 
       // Step 4: Update HoA user with agency_id
-      await new Promise<void>((resolve, reject) => {
-        db.run(
-          'UPDATE users SET agency_id = ? WHERE id = ?',
-          [agencyId, hoaUserId],
-          (err) => {
-            if (err) reject(err);
-            else resolve();
-          }
-        );
-      });
+      await runAsync(db, 
+        'UPDATE users SET agency_id = ? WHERE id = ?',
+        [agencyId, hoaUserId]
+      );
 
-      // Step 5: Create audit log (with proper error handling)
+      // Step 5: Create audit log
       try {
         await logAction(
           req, 
@@ -606,16 +525,10 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         console.log('[AUDIT] Agency creation logged successfully');
       } catch (auditError) {
         console.error('[AUDIT ERROR] Failed to create audit log:', auditError);
-        // Don't fail the whole operation if audit log fails
       }
 
       // Step 6: Handle email notification
-      let emailResult: {
-        success: boolean;
-        messageId?: string;
-        recipient: string;
-        error?: string;
-      } | null = null;
+      let emailResult = null;
       
       if (sendEmailNotification) {
         try {
@@ -636,13 +549,7 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
       }
 
       // Commit transaction
-      await new Promise<void>((resolve, reject) => {
-        db.run('COMMIT', (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-      transactionCompleted = true;
+      await runAsync(db, 'COMMIT');
 
       // Step 7: Prepare response
       const responseData: any = {
@@ -661,7 +568,6 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         ]
       };
 
-      // Include email details in response
       if (sendEmailNotification && emailResult) {
         responseData.emailDetails = {
           recipient: emailResult.recipient,
@@ -676,30 +582,19 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         }
       }
 
-      // Include temporary password in response if it wasn't emailed or email failed
       if ((!sendEmailNotification || !emailResult?.success) && isNewUser && tempPassword) {
         responseData.tempPassword = tempPassword;
         responseData.note = 'Please manually provide these credentials to the HoA';
       }
 
-      const response = {
+      res.status(201).json({
         success: true,
         message: 'Agency and Head of Agency created successfully',
         data: responseData
-      };
-
-      res.status(201).json(response);
+      });
 
     } catch (err) {
-      // Rollback on any error
-      if (!transactionCompleted) {
-        await new Promise<void>((resolve, reject) => {
-          db.run('ROLLBACK', (err) => {
-            if (err) console.error('Rollback error:', err);
-            resolve();
-          });
-        });
-      }
+      await runAsync(db, 'ROLLBACK');
       throw err;
     }
 
@@ -719,64 +614,55 @@ function generateTemporaryPassword(): string {
   const lower = 'abcdefghijklmnopqrstuvwxyz';
   const numbers = '0123456789';
   
-  // Ensure at least one of each type
   let password = upper.charAt(Math.floor(Math.random() * upper.length));
   password += lower.charAt(Math.floor(Math.random() * lower.length));
   password += numbers.charAt(Math.floor(Math.random() * numbers.length));
   password += numbers.charAt(Math.floor(Math.random() * numbers.length));
   
-  // Fill the rest with random characters
   const allChars = upper + lower + numbers;
   for (let i = 0; i < 4; i++) {
     password += allChars.charAt(Math.floor(Math.random() * allChars.length));
   }
   
-  // Shuffle the password
   return password.split('').sort(() => Math.random() - 0.5).join('');
 }
 
-// GET /api/admin/agencies - SIMPLIFIED (no asset_declarations)
+// ============================================
+// GET /api/admin/agencies
+// ============================================
 export const getAgencies = async (req: Request, res: Response) => {
   try {
     const db = getDB();
     
-    // We explicitly select all columns to ensure new fields like hoa_name, 
-    // focal_person_name, etc., are included in the response.
-    const agencies = await new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT 
-          a.id, 
-          a.name, 
-          a.sector, 
-          a.agency_type, 
-          a.status, 
-          a.address, 
-          a.website,
-          a.contact_email, 
-          a.contact_phone, 
-          a.contact_person,
-          a.hoa_name, 
-          a.hoa_email, 
-          a.hoa_phone,
-          a.focal_person_name, 
-          a.focal_person_email, 
-          a.focal_person_phone,
-          a.hoa_user_id,
-          a.created_at, 
-          a.updated_at,
-          COUNT(u.id) as user_count
-         FROM agencies a
-         LEFT JOIN users u ON u.agency_id = a.id
-         GROUP BY a.id
-         ORDER BY a.name`,
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
+    const agencies = await allAsync<any[]>(db, 
+      `SELECT 
+        a.id, 
+        a.name, 
+        a.sector, 
+        a.agency_type, 
+        a.status, 
+        a.address, 
+        a.website,
+        a.contact_email, 
+        a.contact_phone, 
+        a.contact_person,
+        a.hoa_name, 
+        a.hoa_email, 
+        a.hoa_phone,
+        a.focal_person_name, 
+        a.focal_person_email, 
+        a.focal_person_phone,
+        a.hoa_user_id,
+        a.created_at, 
+        a.updated_at,
+        COUNT(u.id) as user_count
+       FROM agencies a
+       LEFT JOIN users u ON u.agency_id = a.id
+       GROUP BY a.id
+       ORDER BY a.name`,
+      []
+    );
 
-    // Return the agencies array wrapped in an object as expected by the frontend
     res.json({ 
       success: true,
       agencies 
@@ -790,7 +676,9 @@ export const getAgencies = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // POST /api/admin/agencies
+// ============================================
 export const createAgency = async (req: Request, res: Response) => {
   const { name, sector } = req.body;
 
@@ -802,12 +690,10 @@ export const createAgency = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Check duplicate
-    const existing = await new Promise<any>((resolve, reject) => {
-      db.get('SELECT id FROM agencies WHERE LOWER(name) = LOWER(?)', [name.trim()], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+    const existing = await getAsync<any>(db, 
+      'SELECT id FROM agencies WHERE LOWER(name) = LOWER(?)', 
+      [name.trim()]
+    );
 
     if (existing) {
       return res.status(409).json({ error: 'Agency with this name already exists' });
@@ -816,18 +702,12 @@ export const createAgency = async (req: Request, res: Response) => {
     const id = `AGY_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
     const now = new Date().toISOString();
 
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `INSERT INTO agencies (id, name, sector, created_at) VALUES (?, ?, ?, ?)`,
-        [id, name.trim(), sector.trim(), now],
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    });
+    await runAsync(db, 
+      `INSERT INTO agencies (id, name, sector, created_at) VALUES (?, ?, ?, ?)`,
+      [id, name.trim(), sector.trim(), now]
+    );
 
-    // 🔒 Audit log with error handling
+    // Audit log
     try {
       await logAction(req, 'create_agency', { type: 'agency', id }, { name, sector });
     } catch (auditError) {
@@ -843,7 +723,9 @@ export const createAgency = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // PUT /api/admin/agencies/:id
+// ============================================
 export const updateAgency = async (req: Request, res: Response) => {
   const { id } = req.params;
   const { 
@@ -853,11 +735,9 @@ export const updateAgency = async (req: Request, res: Response) => {
     status,
     address,
     website,
-    // These come from the frontend payload mapping
     contactEmail, 
     contactPhone, 
     contactPerson,
-    // HoA and Focal Person details
     hoa_name,
     hoa_email,
     hoa_phone,
@@ -874,13 +754,11 @@ export const updateAgency = async (req: Request, res: Response) => {
   try {
     const db = getDB();
 
-    // 1. Get current agency data to check for existence and changes
-    const current = await new Promise<any>((resolve, reject) => {
-      db.get('SELECT * FROM agencies WHERE id = ?', [id], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+    // Get current agency data
+    const current = await getAsync<any>(db, 
+      'SELECT * FROM agencies WHERE id = ?', 
+      [id]
+    );
 
     if (!current) {
       return res.status(404).json({ error: 'Agency not found' });
@@ -888,57 +766,50 @@ export const updateAgency = async (req: Request, res: Response) => {
 
     const now = new Date().toISOString();
 
-    // 2. Update the agencies table
-    // We include all the fields that the frontend form provides
-    await new Promise<void>((resolve, reject) => {
-      db.run(
-        `UPDATE agencies SET 
-          name = ?, 
-          sector = ?, 
-          agency_type = ?,
-          status = ?, 
-          address = ?, 
-          website = ?, 
-          contact_email = ?, 
-          contact_phone = ?, 
-          contact_person = ?,
-          hoa_name = ?,
-          hoa_email = ?,
-          hoa_phone = ?,
-          focal_person_name = ?,
-          focal_person_email = ?,
-          focal_person_phone = ?,
-          hoa_user_id = ?, 
-          updated_at = ?
-         WHERE id = ?`,
-        [
-          name.trim(),
-          sector.trim(),
-          agency_type || current.agency_type,
-          status || current.status,
-          address?.trim() || null,
-          website?.trim() || null,
-          contactEmail?.trim() || null,
-          contactPhone?.trim() || null,
-          contactPerson?.trim() || null,
-          hoa_name?.trim() || null,
-          hoa_email?.trim() || null,
-          hoa_phone?.trim() || null,
-          focal_person_name?.trim() || null,
-          focal_person_email?.trim() || null,
-          focal_person_phone?.trim() || null,
-          hoaUserId || current.hoa_user_id,
-          now,
-          id
-        ],
-        (err) => {
-          if (err) reject(err);
-          else resolve();
-        }
-      );
-    });
+    // Update the agencies table
+    await runAsync(db, 
+      `UPDATE agencies SET 
+        name = ?, 
+        sector = ?, 
+        agency_type = ?,
+        status = ?, 
+        address = ?, 
+        website = ?, 
+        contact_email = ?, 
+        contact_phone = ?, 
+        contact_person = ?,
+        hoa_name = ?,
+        hoa_email = ?,
+        hoa_phone = ?,
+        focal_person_name = ?,
+        focal_person_email = ?,
+        focal_person_phone = ?,
+        hoa_user_id = ?, 
+        updated_at = ?
+       WHERE id = ?`,
+      [
+        name.trim(),
+        sector.trim(),
+        agency_type || current.agency_type,
+        status || current.status,
+        address?.trim() || null,
+        website?.trim() || null,
+        contactEmail?.trim() || null,
+        contactPhone?.trim() || null,
+        contactPerson?.trim() || null,
+        hoa_name?.trim() || null,
+        hoa_email?.trim() || null,
+        hoa_phone?.trim() || null,
+        focal_person_name?.trim() || null,
+        focal_person_email?.trim() || null,
+        focal_person_phone?.trim() || null,
+        hoaUserId || current.hoa_user_id,
+        now,
+        id
+      ]
+    );
 
-    // 3. Audit log
+    // Audit log
     try {
       await logAction(req, 'update_agency', { type: 'agency', id }, {
         name: name.trim(),
@@ -950,7 +821,6 @@ export const updateAgency = async (req: Request, res: Response) => {
       console.error('[AUDIT ERROR] Failed to log agency update:', auditError);
     }
 
-    // 4. Return the updated agency
     res.json({ 
       success: true,
       message: 'Agency updated successfully',
@@ -969,51 +839,40 @@ export const updateAgency = async (req: Request, res: Response) => {
   }
 };
 
-// DELETE /api/admin/agencies/:id - SIMPLIFIED (no asset_declarations check)
+// ============================================
+// DELETE /api/admin/agencies/:id
+// ============================================
 export const deleteAgency = async (req: Request, res: Response) => {
   const { id } = req.params;
 
   try {
     const db = getDB();
 
-    // Check if used - only check for users now
-    const usage = await new Promise<any>((resolve, reject) => {
-      db.get(
-        `SELECT COUNT(*) as users FROM users WHERE agency_id = ?`,
-        [id],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
+    // Check if used by users
+    const usage = await getAsync<any>(db, 
+      `SELECT COUNT(*) as users FROM users WHERE agency_id = ?`,
+      [id]
+    );
 
-    if (usage.users > 0) {
+    if (usage && usage.users > 0) {
       return res.status(400).json({ 
         error: `Cannot delete: ${usage.users} users depend on this agency` 
       });
     }
 
     // Get name for audit
-    const agency = await new Promise<any>((resolve, reject) => {
-      db.get('SELECT name, sector FROM agencies WHERE id = ?', [id], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
-      });
-    });
+    const agency = await getAsync<any>(db, 
+      'SELECT name, sector FROM agencies WHERE id = ?', 
+      [id]
+    );
 
     if (!agency) {
       return res.status(404).json({ error: 'Agency not found' });
     }
 
-    await new Promise<void>((resolve, reject) => {
-      db.run('DELETE FROM agencies WHERE id = ?', [id], (err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
+    await runAsync(db, 'DELETE FROM agencies WHERE id = ?', [id]);
 
-    // 🔒 Audit log with error handling
+    // Audit log
     try {
       await logAction(req, 'delete_agency', { type: 'agency', id }, agency);
     } catch (auditError) {

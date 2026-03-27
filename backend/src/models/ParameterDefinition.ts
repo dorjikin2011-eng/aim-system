@@ -600,9 +600,14 @@ export class ParameterDefinition {
     );
     
     const byType: Record<string, number> = {};
-    typeResult.forEach(row => {
-      byType[row.data_type] = row.count;
-    });
+
+// Ensure typeResult is an array
+const types = Array.isArray(typeResult) ? typeResult : (typeResult ? [typeResult] : []);
+types.forEach(row => {
+  if (row && row.data_type) {
+    byType[row.data_type] = row.count || 0;
+  }
+});
     
     const byCalculationType: Record<string, number> = {};
     calcTypeResult.forEach(row => {

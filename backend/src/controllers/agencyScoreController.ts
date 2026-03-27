@@ -1,8 +1,10 @@
-
 // backend/src/controllers/agencyScoreController.ts
 import { Request, Response } from 'express';
-import { getDB } from '../models/db';
+import { getDB, allAsync } from '../models/db';
 
+// ============================================
+// GET /api/agency/scores
+// ============================================
 export const getAgencyScores = async (req: Request, res: Response) => {
   try {
     const { fiscal_year } = req.query;
@@ -12,32 +14,30 @@ export const getAgencyScores = async (req: Request, res: Response) => {
     const targetFiscalYear = fiscal_year || '2025-26';
     
     // Get all active indicators first to understand the scoring structure
-    const indicators = await new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT id, weight, category FROM indicators WHERE is_active = 1 ORDER BY display_order`,
-        (err, rows) => (err ? reject(err) : resolve(rows))
-      );
-    });
+    const indicators = await allAsync<any[]>(db, 
+      `SELECT id, weight, category FROM indicators WHERE is_active = 1 ORDER BY display_order`,
+      []
+    );
     
-    const rows = await new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT a.id, a.name, 
-                COALESCE(SUM(id.score), 0) as total_score,
-                COALESCE(SUM(i.weight), 0) as max_possible_score,
-                COUNT(DISTINCT id.indicator_id) as indicators_assessed,
-                COUNT(DISTINCT i.id) as total_indicators
-         FROM agencies a
-         LEFT JOIN indicator_data id ON a.id = id.agency_id 
-           AND id.fiscal_year = ? 
-           AND id.status = 'final'
-         LEFT JOIN indicators i ON i.id = id.indicator_id AND i.is_active = 1
-         WHERE a.status = 'active'
-         GROUP BY a.id, a.name
-         ORDER BY total_score DESC`,
-        [targetFiscalYear],
-        (err, rows) => (err ? reject(err) : resolve(rows))
-      );
-    });
+    // Get agency scores
+    const rows = await allAsync<any[]>(db, 
+      `SELECT 
+        a.id, 
+        a.name, 
+        COALESCE(SUM(id.score), 0) as total_score,
+        COALESCE(SUM(i.weight), 0) as max_possible_score,
+        COUNT(DISTINCT id.indicator_id) as indicators_assessed,
+        COUNT(DISTINCT i.id) as total_indicators
+      FROM agencies a
+      LEFT JOIN indicator_data id ON a.id = id.agency_id 
+        AND id.fiscal_year = ? 
+        AND id.status = 'final'
+      LEFT JOIN indicators i ON i.id = id.indicator_id AND i.is_active = 1
+      WHERE a.status = 'active'
+      GROUP BY a.id, a.name
+      ORDER BY total_score DESC`,
+      [targetFiscalYear]
+    );
 
     const scores = rows.map(row => ({
       id: row.id,

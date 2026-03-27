@@ -1,24 +1,23 @@
 // backend/src/controllers/configController.ts - FIXED TYPES
 import { Request, Response } from 'express';
-import { Database } from 'sqlite3';
-import { getDB } from '../models/db';
+import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 
+// ============================================
 // Enhanced function to handle database schema gracefully
+// ============================================
 async function ensureConfigTableExists() {
   const db = getDB();
   
   try {
     // First, try to check if table exists and get its schema
-    const tableInfo = await new Promise<any[]>((resolve, reject) => {
-      db.all("PRAGMA table_info('system_config')", (err: Error | null, rows: any[]) => {
-        if (err) {
-          // Table might not exist
-          resolve([]);
-        } else {
-          resolve(rows || []);
-        }
-      });
-    });
+    let tableInfo: any[] = [];
+    try {
+      tableInfo = await allAsync<any[]>(db, "PRAGMA table_info('system_config')", []);
+    } catch (err) {
+      // Table might not exist
+      console.log('System_config table may not exist:', err);
+      tableInfo = [];
+    }
     
     if (tableInfo.length === 0) {
       // Table doesn't exist - try to create it
@@ -35,49 +34,48 @@ async function ensureConfigTableExists() {
   }
 }
 
-async function createNewTable(db: Database): Promise<void> {
-  return new Promise((resolve, reject) => {
-    db.run(`
+// ============================================
+// Create new table
+// ============================================
+async function createNewTable(db: any): Promise<void> {
+  try {
+    await runAsync(db, `
       CREATE TABLE IF NOT EXISTS system_config (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
+        id INTEGER PRIMARY KEY,
         high_integrity_min REAL DEFAULT 80.0,
         medium_integrity_min REAL DEFAULT 50.0,
         default_assessment_year INTEGER DEFAULT 2025,
         max_file_size_mb INTEGER DEFAULT 10,
-        enable_auto_scoring BOOLEAN DEFAULT 1,
+        enable_auto_scoring INTEGER DEFAULT 1,
         updated_by TEXT NOT NULL DEFAULT 'system',
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
-    `, (err: Error | null) => {
-      if (err) {
-        console.warn('Could not create table (might be read-only):', err.message);
-        resolve(); // Don't fail, we'll use defaults
-        return;
-      }
-      
-      // Insert default config
-      db.run(`
-        INSERT OR IGNORE INTO system_config (
-          id, high_integrity_min, medium_integrity_min,
-          default_assessment_year, max_file_size_mb, enable_auto_scoring, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [1, 80.0, 50.0, 2025, 10, 1, 'system'], (err: Error | null) => {
-        if (err) {
-          console.warn('Could not insert default config:', err.message);
-        }
-        resolve();
-      });
-    });
-  });
+    `, []);
+    
+    // Insert default config
+    await runAsync(db, `
+      INSERT OR IGNORE INTO system_config (
+        id, high_integrity_min, medium_integrity_min,
+        default_assessment_year, max_file_size_mb, enable_auto_scoring, updated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [1, 80.0, 50.0, 2025, 10, 1, 'system']);
+    
+    console.log('System_config table created successfully');
+  } catch (error) {
+    console.warn('Could not create table:', error);
+  }
 }
 
-async function ensureRequiredColumns(db: Database, existingColumns: any[]): Promise<void> {
+// ============================================
+// Ensure required columns exist
+// ============================================
+async function ensureRequiredColumns(db: any, existingColumns: any[]): Promise<void> {
   const requiredColumns = [
     { name: 'high_integrity_min', type: 'REAL', default: '80.0' },
     { name: 'medium_integrity_min', type: 'REAL', default: '50.0' },
     { name: 'default_assessment_year', type: 'INTEGER', default: '2025' },
     { name: 'max_file_size_mb', type: 'INTEGER', default: '10' },
-    { name: 'enable_auto_scoring', type: 'BOOLEAN', default: '1' }
+    { name: 'enable_auto_scoring', type: 'INTEGER', default: '1' }
   ];
   
   for (const reqCol of requiredColumns) {
@@ -85,49 +83,42 @@ async function ensureRequiredColumns(db: Database, existingColumns: any[]): Prom
     if (!exists) {
       console.log(`Adding missing column: ${reqCol.name}`);
       try {
-        await new Promise<void>((resolve, reject) => {
-          db.run(`ALTER TABLE system_config ADD COLUMN ${reqCol.name} ${reqCol.type} DEFAULT ${reqCol.default}`, (err: Error | null) => {
-            if (err) {
-              console.warn(`Could not add column ${reqCol.name}:`, err.message);
-            }
-            resolve();
-          });
-        });
+        await runAsync(db, 
+          `ALTER TABLE system_config ADD COLUMN ${reqCol.name} ${reqCol.type} DEFAULT ${reqCol.default}`,
+          []
+        );
       } catch (error) {
-        // Ignore - column might already exist or database is read-only
+        console.warn(`Could not add column ${reqCol.name}:`, error);
       }
     }
   }
 }
 
+// ============================================
 // Helper function to get indicators with their weights
+// ============================================
 async function getIndicatorsWithWeights() {
   try {
     const db = getDB();
     
-    return new Promise<any[]>((resolve, reject) => {
-      db.all(
-        `SELECT id, code, name, weight, category, is_active 
-         FROM indicators 
-         WHERE is_active = 1 
-         ORDER BY display_order, name`,
-        (err: Error | null, rows: any[]) => {
-          if (err) {
-            console.warn('Error getting indicators:', err.message);
-            resolve([]); // Return empty array instead of failing
-          } else {
-            resolve(rows || []);
-          }
-        }
-      );
-    });
+    const rows = await allAsync<any[]>(db, 
+      `SELECT id, code, name, weight, category, is_active 
+       FROM indicators 
+       WHERE is_active = 1 
+       ORDER BY display_order, name`,
+      []
+    );
+    
+    return rows || [];
   } catch (error) {
-    console.warn('Error in getIndicatorsWithWeights:', error);
+    console.warn('Error getting indicators:', error);
     return [];
   }
 }
 
+// ============================================
 // GET /api/admin/config - Robust version
+// ============================================
 export const getConfig = async (req: Request, res: Response) => {
   try {
     await ensureConfigTableExists();
@@ -137,18 +128,9 @@ export const getConfig = async (req: Request, res: Response) => {
     // Try to get system config
     let systemConfig: any = null;
     try {
-      systemConfig = await new Promise<any>((resolve, reject) => {
-        db.get('SELECT * FROM system_config WHERE id = 1', (err: Error | null, row: any) => {
-          if (err) {
-            console.warn('Error reading system_config:', err.message);
-            resolve(null);
-          } else {
-            resolve(row);
-          }
-        });
-      });
+      systemConfig = await getAsync<any>(db, 'SELECT * FROM system_config WHERE id = 1', []);
     } catch (error) {
-      console.warn('Failed to read system config, using defaults');
+      console.warn('Error reading system_config:', error);
     }
 
     // Get dynamic indicators
@@ -162,7 +144,7 @@ export const getConfig = async (req: Request, res: Response) => {
       medium_integrity_min: systemConfig?.medium_integrity_min || 50.0,
       default_assessment_year: systemConfig?.default_assessment_year || 2025,
       max_file_size_mb: systemConfig?.max_file_size_mb || 10,
-      enable_auto_scoring: systemConfig?.enable_auto_scoring !== undefined ? systemConfig.enable_auto_scoring : true,
+      enable_auto_scoring: systemConfig?.enable_auto_scoring !== undefined ? (systemConfig.enable_auto_scoring === 1) : true,
       updated_by: systemConfig?.updated_by || 'system',
       updated_at: systemConfig?.updated_at || new Date().toISOString(),
       
@@ -173,8 +155,8 @@ export const getConfig = async (req: Request, res: Response) => {
     };
 
     res.json(response);
-  } catch (err: any) {
-    console.error('Config fetch failed:', err.message || err);
+  } catch (err) {
+    console.error('Config fetch failed:', err);
     
     // Return safe defaults on complete failure
     res.json({
@@ -192,7 +174,9 @@ export const getConfig = async (req: Request, res: Response) => {
   }
 };
 
+// ============================================
 // PUT /api/admin/config - Try to update, but don't fail if read-only
+// ============================================
 export const updateConfig = async (req: Request, res: Response) => {
   try {
     const {
@@ -217,52 +201,45 @@ export const updateConfig = async (req: Request, res: Response) => {
     await ensureConfigTableExists();
 
     const db = getDB();
-    const updated_by = req.user?.email || 'system';
+    const updated_by = (req as any).user?.email || 'system';
 
     try {
-      await new Promise<void>((resolve, reject) => {
-        db.run(
-          `UPDATE system_config SET
-            high_integrity_min = ?, 
-            medium_integrity_min = ?,
-            default_assessment_year = ?,
-            max_file_size_mb = ?,
-            enable_auto_scoring = ?,
-            updated_by = ?, 
-            updated_at = CURRENT_TIMESTAMP
-           WHERE id = 1`,
-          [
-            high_integrity_min, 
-            medium_integrity_min,
-            default_assessment_year || 2025,
-            max_file_size_mb || 10,
-            enable_auto_scoring !== false ? 1 : 0,
-            updated_by
-          ],
-          (err: Error | null) => {
-            if (err) {
-              console.warn('Could not update system_config (might be read-only):', err.message);
-              // Don't reject - just log and continue
-            }
-            resolve();
-          }
-        );
-      });
+      await runAsync(db, 
+        `UPDATE system_config SET
+          high_integrity_min = ?, 
+          medium_integrity_min = ?,
+          default_assessment_year = ?,
+          max_file_size_mb = ?,
+          enable_auto_scoring = ?,
+          updated_by = ?, 
+          updated_at = CURRENT_TIMESTAMP
+         WHERE id = 1`,
+        [
+          high_integrity_min, 
+          medium_integrity_min,
+          default_assessment_year || 2025,
+          max_file_size_mb || 10,
+          enable_auto_scoring !== false ? 1 : 0,
+          updated_by
+        ]
+      );
     } catch (updateError) {
       console.warn('Update failed, but continuing:', updateError);
     }
 
     res.json({ 
       success: true,
-      message: 'Configuration processed (database might be read-only)' 
+      message: 'Configuration processed successfully' 
     });
-  } catch (err: any) {
-    console.error('Config update error:', err.message || err);
+  } catch (err) {
+    console.error('Config update error:', err);
     res.status(500).json({ error: 'Failed to process configuration update' });
   }
 };
 
+// ============================================
 // GET /api/system-config
+// ============================================
 export const getSystemConfig = async (req: Request, res: Response) => {
   try {
     await ensureConfigTableExists();
@@ -271,18 +248,9 @@ export const getSystemConfig = async (req: Request, res: Response) => {
     let systemConfig: any = null;
     
     try {
-      systemConfig = await new Promise<any>((resolve, reject) => {
-        db.get('SELECT * FROM system_config WHERE id = 1', (err: Error | null, row: any) => {
-          if (err) {
-            console.warn('Error reading system_config:', err.message);
-            resolve(null);
-          } else {
-            resolve(row);
-          }
-        });
-      });
+      systemConfig = await getAsync<any>(db, 'SELECT * FROM system_config WHERE id = 1', []);
     } catch (error) {
-      // Use defaults
+      console.warn('Error reading system_config:', error);
     }
 
     res.json({
@@ -292,13 +260,13 @@ export const getSystemConfig = async (req: Request, res: Response) => {
         medium_integrity_min: systemConfig?.medium_integrity_min || 50.0,
         default_assessment_year: systemConfig?.default_assessment_year || 2025,
         max_file_size_mb: systemConfig?.max_file_size_mb || 10,
-        enable_auto_scoring: systemConfig?.enable_auto_scoring !== undefined ? systemConfig.enable_auto_scoring : true,
+        enable_auto_scoring: systemConfig?.enable_auto_scoring !== undefined ? (systemConfig.enable_auto_scoring === 1) : true,
         updated_by: systemConfig?.updated_by || 'system',
         updated_at: systemConfig?.updated_at || new Date().toISOString()
       }
     });
-  } catch (err: any) {
-    console.error('System config fetch failed:', err.message || err);
+  } catch (err) {
+    console.error('System config fetch failed:', err);
     res.status(500).json({ 
       success: false,
       error: 'Failed to load system configuration' 

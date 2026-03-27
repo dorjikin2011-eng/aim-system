@@ -1,9 +1,11 @@
 // backend/src/controllers/agencyDataController.ts
-
 import { Request, Response } from 'express';
 import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 import crypto from 'crypto';
 
+// ============================================
+// GET /api/agency/data
+// ============================================
 export const getAgencyData = async (req: Request, res: Response) => {
   try {
     const db = getDB();
@@ -141,12 +143,15 @@ export const getAgencyData = async (req: Request, res: Response) => {
     result.assigned_officer_id = assignment?.prevention_officer_id || null;
 
     res.json(result);
-  } catch (err: any) {
-    console.error('Get agency data error:', err.message);
+  } catch (err) {
+    console.error('Get agency data error:', err instanceof Error ? err.message : 'Unknown error');
     res.status(500).json({ error: 'Failed to load agency data' });
   }
 };
 
+// ============================================
+// POST /api/agency/data
+// ============================================
 export const updateAgencyData = async (req: Request, res: Response) => {
   try {
     const db = getDB();
@@ -270,6 +275,7 @@ export const updateAgencyData = async (req: Request, res: Response) => {
       }
     ];
 
+    // Start transaction
     await runAsync(db, 'BEGIN TRANSACTION');
 
     try {
@@ -387,12 +393,15 @@ export const updateAgencyData = async (req: Request, res: Response) => {
       }
     });
 
-  } catch (err: any) {
-    console.error('Update agency data error:', err.message);
+  } catch (err) {
+    console.error('Update agency data error:', err instanceof Error ? err.message : 'Unknown error');
     res.status(500).json({ error: 'Failed to save agency data' });
   }
 };
 
+// ============================================
+// GET /api/agency/assigned-officer
+// ============================================
 export const getAssignedOfficer = async (req: Request, res: Response) => {
   try {
     const db = getDB();
@@ -427,9 +436,8 @@ export const getAssignedOfficer = async (req: Request, res: Response) => {
     );
 
     res.json(assignment || null);
-  } catch (err: any) {
-    console.error('Get assigned officer error:', err.message);
+  } catch (err) {
+    console.error('Get assigned officer error:', err instanceof Error ? err.message : 'Unknown error');
     res.status(500).json({ error: 'Failed to get assigned officer' });
   }
 };
-

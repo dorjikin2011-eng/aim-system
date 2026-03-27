@@ -1,8 +1,8 @@
-//backend/src/controllers/ConfigurationVersionController.ts
+// backend/src/controllers/ConfigurationVersionController.ts
 
 import { Request, Response } from 'express';
 import { IndicatorConfig } from '../models/IndicatorConfig';
-import { Parameter } from '../models/Parameter';
+//import { Parameter } from '../models/Parameter';
 import { ValidationError, AuthorizationError } from '../utils/errors';
 import { logger } from '../utils/logger';
 
@@ -16,9 +16,10 @@ export class ConfigurationVersionController {
   static async getVersions(req: Request, res: Response) {
     try {
       const db = getDB();
-      const rows = await allAsync<any>(
+      const rows = await allAsync<any[]>(
         db,
-        'SELECT * FROM configuration_versions ORDER BY created_at DESC'
+        'SELECT * FROM configuration_versions ORDER BY created_at DESC',
+        []
       );
       
       // Parse JSON fields
@@ -93,21 +94,24 @@ export class ConfigurationVersionController {
       
       // Get all scoring rules (using existing table)
       const db = getDB();
-      const scoringRules = await allAsync<any>(
+      const scoringRules = await allAsync<any[]>(
         db,
-        'SELECT * FROM scoring_rules WHERE is_active = 1'
+        'SELECT * FROM scoring_rules WHERE is_active = 1',
+        []
       );
       
       // Get all extended scoring rules
-      const extendedScoringRules = await allAsync<any>(
+      const extendedScoringRules = await allAsync<any[]>(
         db,
-        'SELECT * FROM extended_scoring_rules WHERE is_active = 1'
+        'SELECT * FROM extended_scoring_rules WHERE is_active = 1',
+        []
       );
       
       // Get all form templates
-      const formTemplates = await allAsync<any>(
+      const formTemplates = await allAsync<any[]>(
         db,
-        'SELECT * FROM form_templates WHERE is_active = 1'
+        'SELECT * FROM form_templates WHERE is_active = 1',
+        []
       );
       
       const versionData = {

@@ -1,3 +1,4 @@
+
 /**
  * Controller for weighted calculation endpoints
  * Handles automatic calculation for Indicator 4

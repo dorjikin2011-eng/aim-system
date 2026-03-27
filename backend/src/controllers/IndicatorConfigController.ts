@@ -1,7 +1,8 @@
+
 //backend/src/controllers/IndicatorConfigController.ts - FIXED
 import { Request, Response } from 'express';
 import { IndicatorConfig } from '../models/IndicatorConfig';
-import { ConfigValidator } from '../utils/ConfigValidator';
+//import { ConfigValidator } from '../utils/ConfigValidator';
 import { IndicatorCategory } from '../types/config';
 
 export class IndicatorConfigController {
