@@ -4,6 +4,11 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
+// Add this near the top, after imports
+interface MulterRequest extends Request {
+  files?: Express.Multer.File[];
+}
+
 // Ensure uploads directory exists
 const uploadDir = './uploads';
 if (!fs.existsSync(uploadDir)) {
@@ -32,9 +37,9 @@ const upload = multer({
 
 const router = Router();
 
-router.post('/upload', upload.array('files'), (req: Request, res: Response) => {
+router.post('/upload', upload.array('files'), (req: MulterRequest, res: Response) => {
   try {
-    const files = (req.files as Express.Multer.File[]).map(file => `/uploads/${file.filename}`);
+    const files = req.files?.map(file => `/uploads/${file.filename}`) || [];
     res.json({ success: true, files });
   } catch (error) {
     console.error('Upload error:', error);

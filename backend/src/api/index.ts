@@ -1,10 +1,10 @@
 // backend/api/index.ts
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { Request, Response } from 'express';
 import app from '../server';
 
 /**
  * Vercel serverless function wrapper for Express app
  */
-export default (req: VercelRequest, res: VercelResponse) => {
+export default function handler(req: Request, res: Response) {
   app(req as any, res as any);
 };
