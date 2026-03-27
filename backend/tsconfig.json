@@ -12,10 +12,8 @@
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
-    "noImplicitAny": false,
-    "types": ["node"],
-    "typeRoots": ["./node_modules/@types"]
+    "noImplicitAny": false
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/scripts/**/*"]
+  "exclude": ["node_modules", "dist"]
 }
