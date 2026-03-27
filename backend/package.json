@@ -1,17 +1,15 @@
 {
   "name": "aims-backend",
   "version": "1.0.0",
-  "description": "AIMS System Backend",
-  "main": "dist/server.js",
+  "description": "Backend for AIMS system",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/server.ts",
+    "dev": "ts-node src/index.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
-    "postinstall": "npm run build",
-    "clean": "rm -rf dist node_modules package-lock.json",
-    "rebuild": "npm run clean && npm install && npm run build"
+    "start": "node dist/index.js"
   },
   "dependencies": {
+    "@types/node": "^25.5.0",
     "bcrypt": "^5.1.1",
     "bcryptjs": "^2.4.3",
     "connect-pg-simple": "^9.0.0",
@@ -38,7 +36,6 @@
     "@types/express": "^4.17.25",
     "@types/express-session": "^1.18.2",
     "@types/multer": "^2.1.0",
-    "@types/node": "^25.5.0",
     "@types/nodemailer": "^6.4.23",
     "@types/pg": "^8.20.0",
     "@types/sqlite3": "^3.1.11",
@@ -51,8 +48,5 @@
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  }
 }
