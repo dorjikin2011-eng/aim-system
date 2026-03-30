@@ -166,6 +166,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/auth/reset', resetPasswordRoutes);
 app.get('/api/system-config', getSystemConfig);
 app.get('/api/health', (_req, res) => res.json({ status: 'OK' }));
+app.get('/api/test', (req, res) => {
+  res.json({ message: 'Test route works!', time: new Date().toISOString() });
+});
 
 // ✅ ADD THIS TEST ROUTE
 app.get('/api/test', (_req, res) => {
