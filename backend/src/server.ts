@@ -167,7 +167,6 @@ app.get('/api/test', (_req, res) => {
   res.json({ message: 'Test route works!', time: new Date().toISOString() });
 });
 
-// Fix endpoint - creates admin user and form template
 app.post('/api/fix-template', async (req, res) => {
   try {
     const db = getDB();
@@ -175,14 +174,14 @@ app.post('/api/fix-template', async (req, res) => {
     const bcrypt = require('bcrypt');
     const crypto = require('crypto');
     
-    // Create/update admin user
+    // Create/update admin user - explicitly set is_active to true
     const hashedPassword = await bcrypt.hash('admin123', 10);
     await runAsync(db, `
       INSERT INTO users (id, name, email, password_hash, role, is_active)
       VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (email) DO UPDATE SET 
         password_hash = $4,
-        is_active = $6,
+        is_active = true,
         updated_at = CURRENT_TIMESTAMP
     `, [
       crypto.randomUUID(),
@@ -190,15 +189,22 @@ app.post('/api/fix-template', async (req, res) => {
       'admin@acc.gov',
       hashedPassword,
       'system_admin',
-      isPG ? true : 1
+      true
     ]);
     
-    // Get user to verify
+    // Get the full user record
     const user = await getAsync<any>(db, 
-      "SELECT email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
+      "SELECT id, email, role, is_active, status FROM users WHERE email = 'admin@acc.gov'"
     );
     
-    // Create form template if needed
+    // Test if the login would work
+    const loginCheck = {
+      is_active: user?.is_active,
+      status: user?.status,
+      wouldLogin: (user?.is_active === true || user?.is_active === 1 || user?.status === 'active')
+    };
+    
+    // Create template if needed
     const exists = await getAsync<{ count: number }>(db,
       "SELECT COUNT(*) as count FROM form_templates WHERE id = 'template_aims_assessment_v3'"
     );
@@ -215,7 +221,7 @@ app.post('/api/fix-template', async (req, res) => {
         JSON.stringify(['ind_iccs_v3', 'ind_training_v3', 'ind_ad_v3', 'ind_coc_v3', 'ind_cases_v3']),
         '[]',
         '3.0.0',
-        isPG ? true : 1,
+        true,
         'system',
         'system'
       ]);
@@ -223,8 +229,9 @@ app.post('/api/fix-template', async (req, res) => {
     
     res.json({ 
       success: true, 
-      admin: user,
-      message: 'Admin ready! Login with admin@acc.gov / admin123'
+      user,
+      loginCheck,
+      message: loginCheck.wouldLogin ? 'Login should work!' : 'Login would fail - check database'
     });
   } catch (err) {
     console.error('Error:', err);
