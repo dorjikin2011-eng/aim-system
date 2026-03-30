@@ -175,12 +175,6 @@ app.post('/api/fix-template', async (req, res) => {
     const bcrypt = require('bcrypt');
     const crypto = require('crypto');
     
-    // First, check current user
-    const beforeUser = await getAsync<any>(db, 
-      "SELECT id, email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
-    );
-    console.log('Before update:', beforeUser);
-    
     // Update admin user
     const hashedPassword = await bcrypt.hash('admin123', 10);
     await runAsync(db, `
@@ -199,18 +193,25 @@ app.post('/api/fix-template', async (req, res) => {
       true
     ]);
     
-    // Get updated user
-    const afterUser = await getAsync<any>(db, 
-      "SELECT id, email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
-    );
-    console.log('After update:', afterUser);
-    
-    // Create template if needed
-    const exists = await getAsync<{ count: number }>(db,
+    // Check and create form template
+    const templateCount = await getAsync<{ count: number }>(db,
       "SELECT COUNT(*) as count FROM form_templates WHERE id = 'template_aims_assessment_v3'"
     );
     
-    if (exists?.count === 0) {
+    console.log('Template count:', templateCount?.count);
+    
+    if (!templateCount || templateCount.count === 0) {
+      const sections = JSON.stringify([
+        {
+          id: 'section_basic',
+          title: 'Agency Information',
+          fields: [
+            { id: 'agency_name', type: 'text', name: 'agency_name', label: 'Agency Name', required: true },
+            { id: 'fiscal_year', type: 'text', name: 'fiscal_year', label: 'Fiscal Year', required: true }
+          ]
+        }
+      ]);
+      
       await runAsync(db, `
         INSERT INTO form_templates (id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -220,19 +221,30 @@ app.post('/api/fix-template', async (req, res) => {
         'Standard AIMS assessment form',
         'assessment',
         JSON.stringify(['ind_iccs_v3', 'ind_training_v3', 'ind_ad_v3', 'ind_coc_v3', 'ind_cases_v3']),
-        '[]',
+        sections,
         '3.0.0',
         true,
         'system',
         'system'
       ]);
+      console.log('✅ Form template created');
     }
+    
+    // Get the user
+    const user = await getAsync<any>(db, 
+      "SELECT email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
+    );
+    
+    // Verify template was created
+    const finalTemplateCount = await getAsync<{ count: number }>(db,
+      "SELECT COUNT(*) as count FROM form_templates"
+    );
     
     res.json({ 
       success: true, 
-      before: beforeUser,
-      after: afterUser,
-      message: 'Admin updated. Try login now.'
+      user,
+      templateCount: finalTemplateCount?.count || 0,
+      message: `Admin ready! Template count: ${finalTemplateCount?.count || 0}`
     });
   } catch (err) {
     console.error('Error:', err);
