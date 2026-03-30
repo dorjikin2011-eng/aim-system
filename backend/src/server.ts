@@ -253,19 +253,23 @@ app.post('/api/fix-template', async (req, res) => {
 });
 
 //test endpoint
-app.get('/api/debug-auth-version', async (req, res) => {
+app.get('/api/debug-auth-logic', async (req, res) => {
   try {
     const db = getDB();
-    // Get the user and manually check is_active
     const user = await getAsync<any>(db, 
-      "SELECT email, is_active FROM users WHERE email = 'admin@acc.gov'"
+      "SELECT id, email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
     );
-    const manualCheck = user?.is_active === true || user?.is_active === 1;
+    
+    // Simulate what the login controller does
+    const isActiveFromLogin = user?.is_active === true || user?.is_active === 1;
+    const wouldLogin = isActiveFromLogin;
     
     res.json({ 
       user_from_db: user,
-      manual_active_check: manualCheck,
-      message: manualCheck ? 'User is active in DB' : 'User is inactive in DB'
+      is_active_value: user?.is_active,
+      is_active_type: typeof user?.is_active,
+      would_login: wouldLogin,
+      note: wouldLogin ? 'Login should work' : 'Login would fail'
     });
   } catch (err) {
     res.json({ error: String(err) });
