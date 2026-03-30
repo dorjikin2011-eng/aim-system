@@ -240,6 +240,26 @@ app.post('/api/fix-template', async (req, res) => {
   }
 });
 
+//test endpoint
+app.get('/api/debug-auth-version', async (req, res) => {
+  try {
+    const db = getDB();
+    // Get the user and manually check is_active
+    const user = await getAsync<any>(db, 
+      "SELECT email, is_active FROM users WHERE email = 'admin@acc.gov'"
+    );
+    const manualCheck = user?.is_active === true || user?.is_active === 1;
+    
+    res.json({ 
+      user_from_db: user,
+      manual_active_check: manualCheck,
+      message: manualCheck ? 'User is active in DB' : 'User is inactive in DB'
+    });
+  } catch (err) {
+    res.json({ error: String(err) });
+  }
+});
+
 // Debug user endpoint
 app.get('/api/debug-user', async (req, res) => {
   try {
