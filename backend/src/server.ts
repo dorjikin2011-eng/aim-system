@@ -167,6 +167,7 @@ app.get('/api/test', (_req, res) => {
   res.json({ message: 'Test route works!', time: new Date().toISOString() });
 });
 
+// fix-template endpoint
 app.post('/api/fix-template', async (req, res) => {
   try {
     const db = getDB();
@@ -174,7 +175,13 @@ app.post('/api/fix-template', async (req, res) => {
     const bcrypt = require('bcrypt');
     const crypto = require('crypto');
     
-    // Create/update admin user
+    // First, check current user
+    const beforeUser = await getAsync<any>(db, 
+      "SELECT id, email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
+    );
+    console.log('Before update:', beforeUser);
+    
+    // Update admin user
     const hashedPassword = await bcrypt.hash('admin123', 10);
     await runAsync(db, `
       INSERT INTO users (id, name, email, password_hash, role, is_active)
@@ -192,16 +199,11 @@ app.post('/api/fix-template', async (req, res) => {
       true
     ]);
     
-    // Get the user record (without status column)
-    const user = await getAsync<any>(db, 
+    // Get updated user
+    const afterUser = await getAsync<any>(db, 
       "SELECT id, email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
     );
-    
-    // Test if the login would work
-    const loginCheck = {
-      is_active: user?.is_active,
-      wouldLogin: (user?.is_active === true || user?.is_active === 1)
-    };
+    console.log('After update:', afterUser);
     
     // Create template if needed
     const exists = await getAsync<{ count: number }>(db,
@@ -228,9 +230,9 @@ app.post('/api/fix-template', async (req, res) => {
     
     res.json({ 
       success: true, 
-      user,
-      loginCheck,
-      message: loginCheck.wouldLogin ? '✅ Login should work! Use admin@acc.gov / admin123' : '❌ Login would fail'
+      before: beforeUser,
+      after: afterUser,
+      message: 'Admin updated. Try login now.'
     });
   } catch (err) {
     console.error('Error:', err);
