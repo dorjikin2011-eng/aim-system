@@ -165,6 +165,15 @@ app.use('/api/auth/reset', resetPasswordRoutes);
 app.get('/api/system-config', getSystemConfig);
 app.get('/api/health', (_req, res) => res.json({ status: 'OK' }));
 
+// ✅ ADD THIS TEST ROUTE
+app.get('/api/test', (_req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Test route works!',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Auth middleware
 const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (!req.user) {
