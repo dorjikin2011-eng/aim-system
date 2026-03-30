@@ -174,7 +174,7 @@ app.post('/api/fix-template', async (req, res) => {
     const bcrypt = require('bcrypt');
     const crypto = require('crypto');
     
-    // Create/update admin user - explicitly set is_active to true
+    // Create/update admin user
     const hashedPassword = await bcrypt.hash('admin123', 10);
     await runAsync(db, `
       INSERT INTO users (id, name, email, password_hash, role, is_active)
@@ -192,16 +192,15 @@ app.post('/api/fix-template', async (req, res) => {
       true
     ]);
     
-    // Get the full user record
+    // Get the user record (without status column)
     const user = await getAsync<any>(db, 
-      "SELECT id, email, role, is_active, status FROM users WHERE email = 'admin@acc.gov'"
+      "SELECT id, email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
     );
     
     // Test if the login would work
     const loginCheck = {
       is_active: user?.is_active,
-      status: user?.status,
-      wouldLogin: (user?.is_active === true || user?.is_active === 1 || user?.status === 'active')
+      wouldLogin: (user?.is_active === true || user?.is_active === 1)
     };
     
     // Create template if needed
@@ -231,7 +230,7 @@ app.post('/api/fix-template', async (req, res) => {
       success: true, 
       user,
       loginCheck,
-      message: loginCheck.wouldLogin ? 'Login should work!' : 'Login would fail - check database'
+      message: loginCheck.wouldLogin ? '✅ Login should work! Use admin@acc.gov / admin123' : '❌ Login would fail'
     });
   } catch (err) {
     console.error('Error:', err);
