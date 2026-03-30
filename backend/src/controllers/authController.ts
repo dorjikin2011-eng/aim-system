@@ -16,7 +16,7 @@ export const login = async (req: Request, res: Response) => {
     console.log('\n=== LOGIN ATTEMPT ===');
     console.log('Email:', email);
 
-    // ⚠️ TEMPORARILY DISABLE LOCK CHECKS - columns might not exist
+    // Lock checks
     try {
       const isLocked = await UserService.isAccountLocked(email);
       if (isLocked) {
@@ -27,8 +27,7 @@ export const login = async (req: Request, res: Response) => {
       }
     } catch (lockError) {
       const error = lockError as Error;
-      console.warn('Lock check failed (columns might not exist):', error.message);
-      // Continue with login if lock checks fail
+      console.warn('Lock check failed:', error.message);
     }
 
     // Find user
@@ -37,9 +36,7 @@ export const login = async (req: Request, res: Response) => {
     console.log('User found:', !!user);
     if (user) {
       console.log('User properties:', Object.keys(user));
-      console.log('User status:', user.status);
       console.log('User is_active:', user.is_active);
-      console.log('User status === "active":', user.status === 'active');
     }
     
     if (!user) {
@@ -52,11 +49,10 @@ export const login = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check both status and is_active
-    const isActive = user.status === 'active' || user.is_active === true || user.is_active === 1;
+    // Check only is_active (no status column)
+    const isActive = user.is_active === true || user.is_active === 1;
     
     console.log('Active check:', {
-      status: user.status,
       is_active: user.is_active,
       result: isActive
     });
@@ -349,7 +345,7 @@ export const getUserStatus = async (req: Request, res: Response) => {
         is_locked: isLocked,
         lock_time_remaining: lockTimeRemaining,
         login_attempts: user.login_attempts || 0,
-        is_active: user.status === 'active' || user.is_active === true || user.is_active === 1,
+        is_active: user.is_active === true || user.is_active === 1,
         last_login: user.last_login,
         last_password_change: user.password_changed_at
       }
@@ -385,7 +381,7 @@ export const validateSession = async (req: Request, res: Response) => {
     }
 
     const user = await UserService.findById(currentUser.id) as User | null;
-    const isActive = user?.status === 'active' || user?.is_active === true || user?.is_active === 1;
+    const isActive = user?.is_active === true || user?.is_active === 1;
     
     if (!isActive) {
       req.session.destroy(() => {});
