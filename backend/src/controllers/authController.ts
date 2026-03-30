@@ -1,7 +1,7 @@
 // backend/src/controllers/authController.ts
 
 import { Request, Response } from 'express';
-import * as bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 import UserService from '../services/userService';
 import { assertUserRole, User } from '../types';
 
@@ -153,7 +153,8 @@ export const login = async (req: Request, res: Response) => {
     
     res.status(500).json({ 
       error: 'Internal server error during login',
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  details: err.message,
+  stack: err.stack
     });
   }
 };
