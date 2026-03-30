@@ -42,7 +42,8 @@ import { getAgencyById } from './controllers/agencyController';
 import { getSystemConfig } from './controllers/configController';
 
 // DB utilities
-import dbUtils from './models/db';
+import dbUtils, { getDB, getAsync, runAsync } from './models/db';
+import { Pool } from 'pg';
 
 const app = express();
 
@@ -235,6 +236,53 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
     success: false,
     error: 'Internal server error',
   });
+});
+
+// TEMPORARY FIX - REMOVE AFTER RUNNING
+app.get('/api/fix-template', async (req, res) => {
+  try {
+    const db = getDB();
+    const isPG = db instanceof Pool;
+    
+    const templateCheck = await getAsync<{ count: number }>(db,
+      "SELECT COUNT(*) as count FROM form_templates WHERE id = 'template_aims_assessment_v3'"
+    );
+    
+    if (templateCheck?.count === 0) {
+      const sections = JSON.stringify([
+        {
+          id: 'section_basic',
+          title: 'Agency Information',
+          fields: [
+            { id: 'agency_name', type: 'text', name: 'agency_name', label: 'Agency Name', required: true },
+            { id: 'fiscal_year', type: 'text', name: 'fiscal_year', label: 'Fiscal Year', required: true }
+          ]
+        }
+      ]);
+      
+      await runAsync(db, `
+        INSERT INTO form_templates (
+          id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `, [
+        'template_aims_assessment_v3',
+        'AIMS Assessment Form (V3)',
+        'Standard AIMS assessment form',
+        'assessment',
+        JSON.stringify(['ind_iccs_v3', 'ind_training_v3', 'ind_ad_v3', 'ind_coc_v3', 'ind_cases_v3']),
+        sections,
+        '3.0.0',
+        isPG ? true : 1,
+        'system',
+        'system'
+      ]);
+      res.json({ success: true, message: 'Form template created!' });
+    } else {
+      res.json({ success: true, message: 'Template already exists' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
 });
 
 /* -------------------- START SERVER -------------------- */
