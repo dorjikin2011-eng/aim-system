@@ -36,6 +36,7 @@ import directorDashboardRoutes from './routes/directorDashboardRoutes';
 import maturityRoutes from './routes/maturity';
 import agencyRoutes from './routes/agencyDataRoutes';
 import assignedOfficerRoutes from './routes/assignedOfficerRoutes';
+import fixRoutes from './routes/fixRoutes';
 
 // Controllers
 import { getAgencyById } from './controllers/agencyController';
@@ -237,6 +238,8 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
     error: 'Internal server error',
   });
 });
+
+app.use('/api/fix', fixRoutes);
 
 // TEMPORARY FIX - REMOVE AFTER RUNNING
 app.get('/api/fix-template', async (req, res) => {
