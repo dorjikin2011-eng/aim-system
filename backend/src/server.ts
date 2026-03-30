@@ -186,20 +186,23 @@ app.post('/api/fix-template', async (req, res) => {
     const bcrypt = require('bcrypt');
     const crypto = require('crypto');
     
-    // Create admin user
-    const hashedPassword = await bcrypt.hash('admin123', 10);
-    await runAsync(db, `
-      INSERT INTO users (id, name, email, password_hash, role, is_active)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (email) DO UPDATE SET password_hash = $4
-    `, [
-      crypto.randomUUID(),
-      'System Administrator',
-      'admin@acc.gov',
-      hashedPassword,
-      'system_admin',
-      isPG ? true : 1
-    ]);
+    // Create admin user (ensure it's active)
+const hashedPassword = await bcrypt.hash('admin123', 10);
+await runAsync(db, `
+  INSERT INTO users (id, name, email, password_hash, role, is_active)
+  VALUES ($1, $2, $3, $4, $5, $6)
+  ON CONFLICT (email) DO UPDATE SET 
+    password_hash = $4,
+    is_active = $6,
+    updated_at = CURRENT_TIMESTAMP
+`, [
+  crypto.randomUUID(),
+  'System Administrator',
+  'admin@acc.gov',
+  hashedPassword,
+  'system_admin',
+  isPG ? true : 1
+]);
     
     // Create form template
     const exists = await getAsync<{ count: number }>(db,
