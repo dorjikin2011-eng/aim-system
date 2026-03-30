@@ -183,14 +183,30 @@ app.post('/api/fix-template', async (req, res) => {
   try {
     const db = getDB();
     const isPG = db instanceof Pool;
+    const bcrypt = require('bcrypt');
+    const crypto = require('crypto');
     
-    // Check if template exists
+    // Create admin user
+    const hashedPassword = await bcrypt.hash('admin123', 10);
+    await runAsync(db, `
+      INSERT INTO users (id, name, email, password_hash, role, is_active)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (email) DO UPDATE SET password_hash = $4
+    `, [
+      crypto.randomUUID(),
+      'System Administrator',
+      'admin@acc.gov',
+      hashedPassword,
+      'system_admin',
+      isPG ? true : 1
+    ]);
+    
+    // Create form template
     const exists = await getAsync<{ count: number }>(db,
       "SELECT COUNT(*) as count FROM form_templates WHERE id = 'template_aims_assessment_v3'"
     );
     
     if (exists?.count === 0) {
-      // Create simple template
       await runAsync(db, `
         INSERT INTO form_templates (id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -206,40 +222,11 @@ app.post('/api/fix-template', async (req, res) => {
         'system',
         'system'
       ]);
-      res.json({ success: true, message: 'Template created!' });
-    } else {
-      res.json({ success: true, message: 'Template already exists' });
     }
+    
+    res.json({ success: true, message: 'Admin created (admin@acc.gov / admin123) and template ready!' });
   } catch (err) {
     console.error('Error:', err);
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-app.post('/api/create-admin', async (req, res) => {
-  try {
-    const db = getDB();
-    const isPG = db instanceof Pool;
-    const bcrypt = require('bcrypt');
-    const crypto = require('crypto');
-    
-    const hashedPassword = await bcrypt.hash('admin123', 10);
-    
-    await runAsync(db, `
-      INSERT INTO users (id, name, email, password_hash, role, is_active)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (email) DO UPDATE SET password_hash = $4
-    `, [
-      crypto.randomUUID(),
-      'System Administrator',
-      'admin@acc.gov',
-      hashedPassword,
-      'system_admin',
-      isPG ? true : 1
-    ]);
-    
-    res.json({ success: true, message: 'Admin user created/updated with password: admin123' });
-  } catch (err) {
     res.status(500).json({ error: String(err) });
   }
 });
