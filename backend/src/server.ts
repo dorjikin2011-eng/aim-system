@@ -36,7 +36,6 @@ import directorDashboardRoutes from './routes/directorDashboardRoutes';
 import maturityRoutes from './routes/maturity';
 import agencyRoutes from './routes/agencyDataRoutes';
 import assignedOfficerRoutes from './routes/assignedOfficerRoutes';
-import fixRoutes from './routes/fixRoutes';
 
 // Controllers
 import { getAgencyById } from './controllers/agencyController';
@@ -55,11 +54,10 @@ const app = express();
     await dbUtils.createTables();
     console.log('✅ Tables initialized');
 
-    await dbUtils.initializeDatabase(); // includes default/seeding data
+    await dbUtils.initializeDatabase();
     console.log('✅ Default data initialized');
   } catch (err) {
     console.error('❌ DB initialization failed:', err);
-    // Don't exit on error in development, but do in production
     if (process.env.NODE_ENV === 'production') {
       console.error('🚨 Production database initialization failed. Exiting...');
       process.exit(1);
@@ -70,7 +68,7 @@ const app = express();
 /* -------------------- Security Headers -------------------- */
 app.use(
   helmet({
-    contentSecurityPolicy: false, // avoids blocking Vite frontend
+    contentSecurityPolicy: false,
   })
 );
 
@@ -80,7 +78,7 @@ const allowedOrigins = (process.env.FRONTEND_URL || '').split(',');
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true); // allow curl/Postman
+      if (!origin) return callback(null, true);
       if (allowedOrigins.indexOf(origin) === -1) {
         return callback(new Error(`CORS blocked: ${origin}`), false);
       }
@@ -95,9 +93,7 @@ app.use(cookieParser());
 app.use(express.json());
 
 /* -------------------- Session -------------------- */
-// Use different session stores based on environment
 if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
-  // Production: Use PostgreSQL session store
   const pgSession = require('connect-pg-simple')(session);
   const { Pool } = require('pg');
   
@@ -126,7 +122,6 @@ if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
     })
   );
 } else {
-  // Development: Use SQLite session store
   const SQLiteStore = require('connect-sqlite3')(session);
   
   app.use(
@@ -166,19 +161,13 @@ app.use('/api/auth', authRoutes);
 app.use('/api/auth/reset', resetPasswordRoutes);
 app.get('/api/system-config', getSystemConfig);
 app.get('/api/health', (_req, res) => res.json({ status: 'OK' }));
-app.get('/api/test', (req, res) => {
+
+// Test routes
+app.get('/api/test', (_req, res) => {
   res.json({ message: 'Test route works!', time: new Date().toISOString() });
 });
 
-// ✅ ADD THIS TEST ROUTE
-app.get('/api/test', (_req, res) => {
-  res.json({ 
-    success: true, 
-    message: 'Test route works!',
-    timestamp: new Date().toISOString()
-  });
-});
-
+// Fix endpoint - creates admin user and form template
 app.post('/api/fix-template', async (req, res) => {
   try {
     const db = getDB();
@@ -186,25 +175,30 @@ app.post('/api/fix-template', async (req, res) => {
     const bcrypt = require('bcrypt');
     const crypto = require('crypto');
     
-    // Create admin user (ensure it's active)
-const hashedPassword = await bcrypt.hash('admin123', 10);
-await runAsync(db, `
-  INSERT INTO users (id, name, email, password_hash, role, is_active)
-  VALUES ($1, $2, $3, $4, $5, $6)
-  ON CONFLICT (email) DO UPDATE SET 
-    password_hash = $4,
-    is_active = $6,
-    updated_at = CURRENT_TIMESTAMP
-`, [
-  crypto.randomUUID(),
-  'System Administrator',
-  'admin@acc.gov',
-  hashedPassword,
-  'system_admin',
-  isPG ? true : 1
-]);
+    // Create/update admin user
+    const hashedPassword = await bcrypt.hash('admin123', 10);
+    await runAsync(db, `
+      INSERT INTO users (id, name, email, password_hash, role, is_active)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (email) DO UPDATE SET 
+        password_hash = $4,
+        is_active = $6,
+        updated_at = CURRENT_TIMESTAMP
+    `, [
+      crypto.randomUUID(),
+      'System Administrator',
+      'admin@acc.gov',
+      hashedPassword,
+      'system_admin',
+      isPG ? true : 1
+    ]);
     
-    // Create form template
+    // Get user to verify
+    const user = await getAsync<any>(db, 
+      "SELECT email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
+    );
+    
+    // Create form template if needed
     const exists = await getAsync<{ count: number }>(db,
       "SELECT COUNT(*) as count FROM form_templates WHERE id = 'template_aims_assessment_v3'"
     );
@@ -227,9 +221,26 @@ await runAsync(db, `
       ]);
     }
     
-    res.json({ success: true, message: 'Admin created (admin@acc.gov / admin123) and template ready!' });
+    res.json({ 
+      success: true, 
+      admin: user,
+      message: 'Admin ready! Login with admin@acc.gov / admin123'
+    });
   } catch (err) {
     console.error('Error:', err);
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Debug user endpoint
+app.get('/api/debug-user', async (req, res) => {
+  try {
+    const db = getDB();
+    const user = await getAsync<any>(db, 
+      "SELECT email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
+    );
+    res.json(user || { error: 'User not found' });
+  } catch (err) {
     res.status(500).json({ error: String(err) });
   }
 });
@@ -295,21 +306,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
     success: false,
     error: 'Internal server error',
   });
-});
-
-app.use('/api/fix', fixRoutes);
-
-
-app.get('/api/debug-user', async (req, res) => {
-  try {
-    const db = getDB();
-    const user = await getAsync<any>(db, 
-      "SELECT email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
-    );
-    res.json(user);
-  } catch (err) {
-    res.json({ error: String(err) });
-  }
 });
 
 /* -------------------- START SERVER -------------------- */
