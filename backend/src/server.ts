@@ -245,6 +245,23 @@ app.get('/api/debug-user', async (req, res) => {
   }
 });
 
+app.get('/api/debug-login-check', async (req, res) => {
+  try {
+    const db = getDB();
+    const user = await getAsync<any>(db, 
+      "SELECT id, email, role, is_active, status FROM users WHERE email = 'admin@acc.gov'"
+    );
+    res.json({ 
+      user,
+      is_active_value: user?.is_active,
+      status_value: user?.status,
+      login_condition: user?.is_active === true || user?.status === 'active'
+    });
+  } catch (err) {
+    res.json({ error: String(err) });
+  }
+});
+
 // Auth middleware
 const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (!req.user) {
