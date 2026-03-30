@@ -203,18 +203,41 @@ export async function allAsync<T = any>(db: sqlite3.Database | Pool, sql: string
 }
 
 // ============================================================================
-// CREATE TABLES WITH POSTGRESQL COMPATIBLE SCHEMA
+// CREATE TABLES WITH POSTGRESQL COMPATIBLE SCHEMA (CORRECT ORDER)
 // ============================================================================
 export async function createTables() {
   const db = getDB();
-  
-  // Check if using PostgreSQL for table creation syntax
   const isPG = db instanceof Pool;
   
   if (isPG) {
     console.log('📝 Creating tables in PostgreSQL...');
     
-    // Users table - PostgreSQL version
+    // 1. Create indicators table FIRST
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS indicators (
+        id TEXT PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        category TEXT NOT NULL CHECK(category IN ('compliance', 'capacity', 'enforcement', 'responsiveness', 'innovation', 'other')),
+        weight REAL DEFAULT 0 CHECK(weight >= 0 AND weight <= 100),
+        max_score REAL DEFAULT 100,
+        scoring_method TEXT DEFAULT 'sum' CHECK(scoring_method IN ('sum', 'average', 'weighted', 'formula', 'conditional', 'manual', 'maturity')),
+        formula TEXT,
+        parameters TEXT NOT NULL DEFAULT '[]',
+        scoring_rules TEXT NOT NULL DEFAULT '[]',
+        ui_config TEXT DEFAULT '{}',
+        is_active BOOLEAN DEFAULT TRUE,
+        display_order INTEGER DEFAULT 0,
+        version INTEGER DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // 2. Create users table
     await runAsync(db, `
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -241,7 +264,7 @@ export async function createTables() {
       );
     `);
     
-    // Agencies table
+    // 3. Create agencies table
     await runAsync(db, `
       CREATE TABLE IF NOT EXISTS agencies (
         id TEXT PRIMARY KEY,
@@ -257,22 +280,27 @@ export async function createTables() {
       );
     `);
     
-    // Assignments table
+    // 4. Create form_templates table
     await runAsync(db, `
-      CREATE TABLE IF NOT EXISTS assignments (
+      CREATE TABLE IF NOT EXISTS form_templates (
         id TEXT PRIMARY KEY,
-        prevention_officer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        agency_id TEXT NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
-        assigned_by TEXT NOT NULL REFERENCES users(id) ON DELETE SET NULL,
-        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        notes TEXT,
-        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled', 'inactive')),
+        name TEXT NOT NULL,
+        description TEXT,
+        template_type TEXT NOT NULL CHECK(template_type IN ('assessment', 'report', 'data_collection', 'custom')),
+        indicator_ids TEXT DEFAULT '[]',
+        sections TEXT NOT NULL DEFAULT '[]',
+        validation_rules TEXT DEFAULT '{}',
+        ui_config TEXT DEFAULT '{}',
+        version TEXT DEFAULT '1.0',
+        is_active BOOLEAN DEFAULT TRUE,
+        created_by TEXT,
+        updated_by TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
     
-    // Assessments table
+    // 5. Create assessments table
     await runAsync(db, `
       CREATE TABLE IF NOT EXISTS assessments (
         id TEXT PRIMARY KEY,
@@ -298,7 +326,7 @@ export async function createTables() {
       );
     `);
     
-    // Dynamic assessment responses table
+    // 6. Create dynamic_assessment_responses table
     await runAsync(db, `
       CREATE TABLE IF NOT EXISTS dynamic_assessment_responses (
         id TEXT PRIMARY KEY,
@@ -318,7 +346,22 @@ export async function createTables() {
       );
     `);
     
-    // System config table
+    // 7. Create assignments table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS assignments (
+        id TEXT PRIMARY KEY,
+        prevention_officer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        agency_id TEXT NOT NULL REFERENCES agencies(id) ON DELETE CASCADE,
+        assigned_by TEXT NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        notes TEXT,
+        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled', 'inactive')),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // 8. Create system_config table
     await runAsync(db, `
       CREATE TABLE IF NOT EXISTS system_config (
         id SERIAL PRIMARY KEY,
@@ -333,52 +376,7 @@ export async function createTables() {
       );
     `);
     
-    // Indicators table
-    await runAsync(db, `
-      CREATE TABLE IF NOT EXISTS indicators (
-        id TEXT PRIMARY KEY,
-        code TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT,
-        category TEXT NOT NULL CHECK(category IN ('compliance', 'capacity', 'enforcement', 'responsiveness', 'innovation', 'other')),
-        weight REAL DEFAULT 0 CHECK(weight >= 0 AND weight <= 100),
-        max_score REAL DEFAULT 100,
-        scoring_method TEXT DEFAULT 'sum' CHECK(scoring_method IN ('sum', 'average', 'weighted', 'formula', 'conditional', 'manual')),
-        formula TEXT,
-        parameters TEXT NOT NULL DEFAULT '[]',
-        scoring_rules TEXT NOT NULL DEFAULT '[]',
-        ui_config TEXT DEFAULT '{}',
-        is_active BOOLEAN DEFAULT TRUE,
-        display_order INTEGER DEFAULT 0,
-        version INTEGER DEFAULT 1,
-        created_by TEXT,
-        updated_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    
-    // Form templates table
-    await runAsync(db, `
-      CREATE TABLE IF NOT EXISTS form_templates (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        template_type TEXT NOT NULL CHECK(template_type IN ('assessment', 'report', 'data_collection', 'custom')),
-        indicator_ids TEXT DEFAULT '[]',
-        sections TEXT NOT NULL DEFAULT '[]',
-        validation_rules TEXT DEFAULT '{}',
-        ui_config TEXT DEFAULT '{}',
-        version TEXT DEFAULT '1.0',
-        is_active BOOLEAN DEFAULT TRUE,
-        created_by TEXT,
-        updated_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    
-    // Configuration versions table
+    // 9. Create configuration_versions table
     await runAsync(db, `
       CREATE TABLE IF NOT EXISTS configuration_versions (
         id TEXT PRIMARY KEY,
@@ -396,203 +394,127 @@ export async function createTables() {
       );
     `);
     
+    // 10. Create audit_logs table
+    await runAsync(db, `
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        action TEXT NOT NULL,
+        resource_type TEXT,
+        resource_id TEXT,
+        details TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
   } else {
-    // SQLite version (original)
+    // SQLite version
     const sqlite = db as sqlite3.Database;
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN (
-          'commissioner', 'director', 'system_admin',
-          'prevention_officer', 'agency_head', 'focal_person'
-        )),
-        agency_id TEXT,
-        password_reset_token TEXT,
-        password_reset_expires DATETIME,
-        last_password_change DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_login DATETIME,
-        login_attempts INTEGER DEFAULT 0,
-        lock_until DATETIME,
-        is_active BOOLEAN DEFAULT 1,
-        department TEXT,
-        phone TEXT,
-        profile_image TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS indicators (
+      id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, description TEXT,
+      category TEXT NOT NULL CHECK(category IN ('compliance', 'capacity', 'enforcement', 'responsiveness', 'innovation', 'other')),
+      weight REAL DEFAULT 0, max_score REAL DEFAULT 100,
+      scoring_method TEXT DEFAULT 'sum' CHECK(scoring_method IN ('sum', 'average', 'weighted', 'formula', 'conditional', 'manual', 'maturity')),
+      formula TEXT, parameters TEXT NOT NULL DEFAULT '[]', scoring_rules TEXT NOT NULL DEFAULT '[]',
+      ui_config TEXT DEFAULT '{}', is_active BOOLEAN DEFAULT 1, display_order INTEGER DEFAULT 0,
+      version INTEGER DEFAULT 1, created_by TEXT, updated_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`);
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS agencies (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        sector TEXT NOT NULL,
-        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'archived')),
-        contact_person TEXT,
-        contact_email TEXT,
-        contact_phone TEXT,
-        address TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('commissioner', 'director', 'system_admin', 'prevention_officer', 'agency_head', 'focal_person')),
+      agency_id TEXT, password_reset_token TEXT, password_reset_expires DATETIME,
+      last_password_change DATETIME DEFAULT CURRENT_TIMESTAMP, last_login DATETIME,
+      login_attempts INTEGER DEFAULT 0, lock_until DATETIME, is_active BOOLEAN DEFAULT 1,
+      department TEXT, phone TEXT, profile_image TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`);
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS assignments (
-        id TEXT PRIMARY KEY,
-        prevention_officer_id TEXT NOT NULL,
-        agency_id TEXT NOT NULL,
-        assigned_by TEXT NOT NULL,
-        assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        notes TEXT,
-        status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled', 'inactive')),
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (prevention_officer_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
-        FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS agencies (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, sector TEXT NOT NULL,
+      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'archived')),
+      contact_person TEXT, contact_email TEXT, contact_phone TEXT, address TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`);
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS assessments (
-        id TEXT PRIMARY KEY,
-        agency_id TEXT NOT NULL,
-        fiscal_year TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('DRAFT', 'SUBMITTED_TO_AGENCY', 'AWAITING_VALIDATION', 'FINALIZED')) DEFAULT 'DRAFT',
-        overall_score REAL,
-        officer_remarks TEXT,
-        agency_remarks TEXT,
-        assigned_officer_id TEXT NOT NULL,
-        validated_by TEXT,
-        validated_at DATETIME,
-        submitted_at DATETIME,
-        finalized_at DATETIME,
-        finalized_by TEXT,
-        finalization_notes TEXT,
-        unlocked_at DATETIME,
-        unlocked_by TEXT,
-        unlock_reason TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
-        FOREIGN KEY (assigned_officer_id) REFERENCES users(id),
-        FOREIGN KEY (validated_by) REFERENCES users(id),
-        UNIQUE(agency_id, fiscal_year)
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS form_templates (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+      template_type TEXT NOT NULL CHECK(template_type IN ('assessment', 'report', 'data_collection', 'custom')),
+      indicator_ids TEXT DEFAULT '[]', sections TEXT NOT NULL DEFAULT '[]',
+      validation_rules TEXT DEFAULT '{}', ui_config TEXT DEFAULT '{}', version TEXT DEFAULT '1.0',
+      is_active BOOLEAN DEFAULT 1, created_by TEXT, updated_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`);
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS dynamic_assessment_responses (
-        id TEXT PRIMARY KEY,
-        assessment_id TEXT NOT NULL,
-        indicator_id TEXT NOT NULL,
-        response_data TEXT NOT NULL DEFAULT '{}',
-        calculated_score REAL,
-        manual_score REAL,
-        final_score REAL,
-        evidence_files TEXT DEFAULT '[]',
-        comments TEXT,
-        validated_by TEXT,
-        validated_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (assessment_id) REFERENCES assessments(id) ON DELETE CASCADE,
-        FOREIGN KEY (indicator_id) REFERENCES indicators(id) ON DELETE CASCADE,
-        UNIQUE(assessment_id, indicator_id)
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS assessments (
+      id TEXT PRIMARY KEY, agency_id TEXT NOT NULL, fiscal_year TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('DRAFT', 'SUBMITTED_TO_AGENCY', 'AWAITING_VALIDATION', 'FINALIZED')) DEFAULT 'DRAFT',
+      overall_score REAL, officer_remarks TEXT, agency_remarks TEXT, assigned_officer_id TEXT NOT NULL,
+      validated_by TEXT, validated_at DATETIME, submitted_at DATETIME, finalized_at DATETIME,
+      finalized_by TEXT, finalization_notes TEXT, unlocked_at DATETIME, unlocked_by TEXT, unlock_reason TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+      FOREIGN KEY (assigned_officer_id) REFERENCES users(id),
+      FOREIGN KEY (validated_by) REFERENCES users(id), UNIQUE(agency_id, fiscal_year)
+    );`);
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS system_config (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        config_key TEXT UNIQUE NOT NULL,
-        config_value TEXT NOT NULL,
-        config_type TEXT DEFAULT 'string' CHECK(config_type IN ('string', 'number', 'boolean', 'json', 'array')),
-        category TEXT DEFAULT 'general',
-        description TEXT,
-        is_public BOOLEAN DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS dynamic_assessment_responses (
+      id TEXT PRIMARY KEY, assessment_id TEXT NOT NULL, indicator_id TEXT NOT NULL,
+      response_data TEXT NOT NULL DEFAULT '{}', calculated_score REAL, manual_score REAL, final_score REAL,
+      evidence_files TEXT DEFAULT '[]', comments TEXT, validated_by TEXT, validated_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (assessment_id) REFERENCES assessments(id) ON DELETE CASCADE,
+      FOREIGN KEY (indicator_id) REFERENCES indicators(id) ON DELETE CASCADE,
+      UNIQUE(assessment_id, indicator_id)
+    );`);
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS indicators (
-        id TEXT PRIMARY KEY,
-        code TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT,
-        category TEXT NOT NULL CHECK(category IN ('compliance', 'capacity', 'enforcement', 'responsiveness', 'innovation', 'other')),
-        weight REAL DEFAULT 0 CHECK(weight >= 0 AND weight <= 100),
-        max_score REAL DEFAULT 100,
-        scoring_method TEXT DEFAULT 'sum' CHECK(scoring_method IN ('sum', 'average', 'weighted', 'formula', 'conditional', 'manual')),
-        formula TEXT,
-        parameters TEXT NOT NULL DEFAULT '[]',
-        scoring_rules TEXT NOT NULL DEFAULT '[]',
-        ui_config TEXT DEFAULT '{}',
-        is_active BOOLEAN DEFAULT 1,
-        display_order INTEGER DEFAULT 0,
-        version INTEGER DEFAULT 1,
-        created_by TEXT,
-        updated_by TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS assignments (
+      id TEXT PRIMARY KEY, prevention_officer_id TEXT NOT NULL, agency_id TEXT NOT NULL,
+      assigned_by TEXT NOT NULL, assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP, notes TEXT,
+      status TEXT DEFAULT 'active' CHECK(status IN ('active', 'completed', 'cancelled', 'inactive')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (prevention_officer_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
+      FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
+    );`);
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS form_templates (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        template_type TEXT NOT NULL CHECK(template_type IN ('assessment', 'report', 'data_collection', 'custom')),
-        indicator_ids TEXT DEFAULT '[]',
-        sections TEXT NOT NULL DEFAULT '[]',
-        validation_rules TEXT DEFAULT '{}',
-        ui_config TEXT DEFAULT '{}',
-        version TEXT DEFAULT '1.0',
-        is_active BOOLEAN DEFAULT 1,
-        created_by TEXT,
-        updated_by TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS system_config (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, config_key TEXT UNIQUE NOT NULL, config_value TEXT NOT NULL,
+      config_type TEXT DEFAULT 'string' CHECK(config_type IN ('string', 'number', 'boolean', 'json', 'array')),
+      category TEXT DEFAULT 'general', description TEXT, is_public BOOLEAN DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`);
     
-    await runAsync(sqlite, `
-      CREATE TABLE IF NOT EXISTS configuration_versions (
-        id TEXT PRIMARY KEY,
-        version_name TEXT NOT NULL,
-        version_number TEXT UNIQUE NOT NULL,
-        description TEXT,
-        indicators TEXT NOT NULL DEFAULT '[]',
-        form_templates TEXT NOT NULL DEFAULT '[]',
-        system_config TEXT NOT NULL DEFAULT '{}',
-        is_active BOOLEAN DEFAULT 0,
-        applied_at DATETIME,
-        applied_by TEXT,
-        created_by TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS configuration_versions (
+      id TEXT PRIMARY KEY, version_name TEXT NOT NULL, version_number TEXT UNIQUE NOT NULL,
+      description TEXT, indicators TEXT NOT NULL DEFAULT '[]', form_templates TEXT NOT NULL DEFAULT '[]',
+      system_config TEXT NOT NULL DEFAULT '{}', is_active BOOLEAN DEFAULT 0,
+      applied_at DATETIME, applied_by TEXT, created_by TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`);
+    
+    await runAsync(sqlite, `CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY, user_id TEXT, action TEXT NOT NULL,
+      resource_type TEXT, resource_id TEXT, details TEXT, ip_address TEXT, user_agent TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`);
   }
   
   console.log('✅ All database tables created/verified successfully');
 }
 
 // ============================================================================
-// SEED DEFAULT DATA (PostgreSQL compatible)
+// SEED DEFAULT DATA - REVISED AIMS FRAMEWORK VERSION 3
 // ============================================================================
 async function initializeDefaultData() {
   const db = getDB();
   const isPG = db instanceof Pool;
   
-  console.log('\n🌱 SEEDING DEFAULT AIMS DATA FROM OFFICIAL GUIDELINE (Sept 2025)');
+  console.log('\n🌱 SEEDING DEFAULT AIMS DATA - REVISED FRAMEWORK VERSION 3 (Sept 2025)');
   
   try {
     // ==================== DEFAULT ADMIN USER ====================
@@ -617,11 +539,12 @@ async function initializeDefaultData() {
     const configCount = await getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM system_config');
     if (configCount?.count === 0) {
       const configs = [
-        { key: 'system.version', value: '2.0.0', type: 'string', category: 'system', description: 'System version' },
+        { key: 'system.version', value: '3.0.0', type: 'string', category: 'system', description: 'System version - Revised AIMS Framework V3' },
         { key: 'integrity.threshold.high', value: '80', type: 'number', category: 'scoring', description: 'High integrity threshold (≥80)' },
         { key: 'integrity.threshold.medium', value: '50', type: 'number', category: 'scoring', description: 'Medium integrity threshold (50-79)' },
         { key: 'assessment.default_year', value: new Date().getFullYear().toString(), type: 'string', category: 'assessment', description: 'Default assessment year' },
         { key: 'ui.theme', value: 'light', type: 'string', category: 'ui', description: 'Default UI theme' },
+        { key: 'framework.version', value: '3.0', type: 'string', category: 'framework', description: 'AIMS Framework Version' }
       ];
       
       for (const config of configs) {
@@ -640,394 +563,251 @@ async function initializeDefaultData() {
       console.log('✅ Created system configuration');
     }
 
-    // ==================== SEED 5 AIMS INDICATORS ====================
-    const indicatorCount = await getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM indicators');
-    if (indicatorCount?.count === 0) {
-      console.log('\n📊 Creating 5 AIMS indicators per official guideline...');
-      
-      const indicators = [
-        {
-          id: 'ind_iccs',
-          code: 'ICCS',
-          name: 'Internal Corruption Control Systems',
-          description: 'Functioning of agency\'s four core integrity systems',
-          category: 'compliance',
-          weight: 28,
-          max_score: 28,
-          scoring_method: 'formula',
-          parameters: JSON.stringify([
-            {
-              id: 'complaint_exists',
-              code: 'complaint_exists',
-              label: 'Complaint Management System Exists',
-              type: 'boolean',
-              description: 'Does the complaint system exist?',
-              required: true,
-              scoringRuleIds: ['rule_iccs_complaint_exists']
-            },
-            {
-              id: 'complaint_functions',
-              code: 'complaint_functions',
-              label: 'Complaint Management System Functions',
-              type: 'boolean',
-              description: 'Does the complaint system function properly?',
-              required: true,
-              scoringRuleIds: ['rule_iccs_complaint_functioning']
-            },
-            {
-              id: 'conflict_exists',
-              code: 'conflict_exists',
-              label: 'Conflict of Interest System Exists',
-              type: 'boolean',
-              description: 'Does the conflict of interest system exist?',
-              required: true,
-              scoringRuleIds: ['rule_iccs_coi_exists']
-            },
-            {
-              id: 'conflict_functions',
-              code: 'conflict_functions',
-              label: 'Conflict of Interest System Functions',
-              type: 'boolean',
-              description: 'Does the conflict of interest system function?',
-              required: true,
-              scoringRuleIds: ['rule_iccs_coi_functioning']
-            },
-            {
-              id: 'gift_exists',
-              code: 'gift_exists',
-              label: 'Gift Register System Exists',
-              type: 'boolean',
-              description: 'Does the gift register system exist?',
-              required: true,
-              scoringRuleIds: ['rule_iccs_gift_exists']
-            },
-            {
-              id: 'gift_functions',
-              code: 'gift_functions',
-              label: 'Gift Register System Functions',
-              type: 'boolean',
-              description: 'Does the gift register system function?',
-              required: true,
-              scoringRuleIds: ['rule_iccs_gift_functioning']
-            },
-            {
-              id: 'proactive_level',
-              code: 'proactive_level',
-              label: 'Proactive Measures Level',
-              type: 'select',
-              description: 'Status of ACC recommendations implementation',
-              required: true,
-              options: [
-                { value: 'level1', label: 'Level 1: ACC Recommendations Present & Functioning (7 points)' },
-                { value: 'level2', label: 'Level 2: No Recommendations & No Proactive Measures (3 points)' },
-                { value: 'level3', label: 'Level 3: ACC Recommendations Exist But Not Implemented (0 points)' }
-              ],
-              scoringRuleIds: ['rule_acc_level1', 'rule_acc_level2', 'rule_acc_level3']
-            }
-          ]),
-          scoring_rules: JSON.stringify([
-            { id: 'rule_iccs_complaint_exists', parameterCode: 'complaint_exists', condition: 'true', points: 3, description: 'Complaint system exists' },
-            { id: 'rule_iccs_complaint_functioning', parameterCode: 'complaint_functions', condition: 'true', points: 4, description: 'Complaint system functions' },
-            { id: 'rule_iccs_coi_exists', parameterCode: 'conflict_exists', condition: 'true', points: 3, description: 'Conflict system exists' },
-            { id: 'rule_iccs_coi_functioning', parameterCode: 'conflict_functions', condition: 'true', points: 4, description: 'Conflict system functions' },
-            { id: 'rule_iccs_gift_exists', parameterCode: 'gift_exists', condition: 'true', points: 3, description: 'Gift register exists' },
-            { id: 'rule_iccs_gift_functioning', parameterCode: 'gift_functions', condition: 'true', points: 4, description: 'Gift register functions' },
-            { id: 'rule_acc_level1', parameterCode: 'proactive_level', condition: 'level1', points: 7, description: 'ACC Recommendations Present & Functioning' },
-            { id: 'rule_acc_level2', parameterCode: 'proactive_level', condition: 'level2', points: 3, description: 'No Recommendations & No Proactive Measures' },
-            { id: 'rule_acc_level3', parameterCode: 'proactive_level', condition: 'level3', points: 0, description: 'ACC Recommendations Exist But Not Implemented' }
-          ]),
-          is_active: isPG ? true : 1,
-          display_order: 1
-        },
-        {
-          id: 'ind_training',
-          code: 'TRAINING',
-          name: 'Integrity Capacity Building',
-          description: 'Staff training and e-learning completion',
-          category: 'capacity',
-          weight: 26,
-          max_score: 26,
-          scoring_method: 'conditional',
-          parameters: JSON.stringify([
-            {
-              id: 'total_employees',
-              code: 'total_employees',
-              label: 'Total Employees',
-              type: 'number',
-              description: 'Total number of employees in the agency',
-              required: true,
-              validation: { min: 1 }
-            },
-            {
-              id: 'completed_employees',
-              code: 'completed_employees',
-              label: 'Completed Employees',
-              type: 'number',
-              description: 'Number of employees who completed ACC e-learning',
-              required: true,
-              validation: { min: 0 }
-            }
-          ]),
-          scoring_rules: JSON.stringify([
-            { minPercentage: 85, points: 26, label: '≥85% → 26 points (Excellent)' },
-            { minPercentage: 70, maxPercentage: 84, points: 18, label: '70-84% → 18 points (Good)' },
-            { minPercentage: 50, maxPercentage: 69, points: 10, label: '50-69% → 10 points (Fair)' },
-            { minPercentage: 0, maxPercentage: 49, points: 0, label: '<50% → 0 points (Needs Improvement)' }
-          ]),
-          is_active: isPG ? true : 1,
-          display_order: 2
-        },
-        {
-          id: 'ind_ad',
-          code: 'AD',
-          name: 'Asset Declaration Compliance',
-          description: 'Asset declaration submission compliance',
-          category: 'compliance',
-          weight: 16,
-          max_score: 16,
-          scoring_method: 'conditional',
-          parameters: JSON.stringify([
-            {
-              id: 'total_covered_officials',
-              code: 'total_covered_officials',
-              label: 'Total Covered Officials',
-              type: 'number',
-              description: 'Total number of officials required to submit Asset Declarations',
-              required: true,
-              validation: { min: 1 }
-            },
-            {
-              id: 'officials_submitted_on_time',
-              code: 'officials_submitted_on_time',
-              label: 'Officials Submitted On Time',
-              type: 'number',
-              description: 'Number of officials who submitted Asset Declarations on time',
-              required: true,
-              validation: { min: 0 }
-            }
-          ]),
-          scoring_rules: JSON.stringify([
-            { condition: '=100', points: 16, label: '100% → 16 points (Perfect)' },
-            { condition: '>=95', points: 10, label: '95-99% → 10 points (Very Good)' },
-            { condition: '>=90', points: 5, label: '90-94% → 5 points (Good)' },
-            { condition: '<90', points: 0, label: '<90% → 0 points (Needs Improvement)' }
-          ]),
-          is_active: isPG ? true : 1,
-          display_order: 3
-        },
-        {
-          id: 'ind_cases',
-          code: 'CASES',
-          name: 'Corruption Case Severity & Resolution',
-          description: 'Weighted severity of corruption cases involving agency staff',
-          category: 'enforcement',
-          weight: 20,
-          max_score: 20,
-          scoring_method: 'weighted',
-          parameters: JSON.stringify([
-            {
-              id: 'convictions',
-              code: 'convictions',
-              label: 'Convictions',
-              type: 'number',
-              description: 'Number of convictions in the Fiscal Year',
-              required: false,
-              weight: 3,
-              validation: { min: 0 }
-            },
-            {
-              id: 'prosecutions',
-              code: 'prosecutions',
-              label: 'Prosecutions/OAG Referrals',
-              type: 'number',
-              description: 'Number of prosecutions or OAG referrals',
-              required: false,
-              weight: 2,
-              validation: { min: 0 }
-            },
-            {
-              id: 'admin_actions',
-              code: 'admin_actions',
-              label: 'Administrative Actions',
-              type: 'number',
-              description: 'Number of ACC-confirmed administrative actions',
-              required: false,
-              weight: 1,
-              validation: { min: 0 }
-            }
-          ]),
-          scoring_rules: JSON.stringify([
-            { range: '=0', points: 20, label: '0 cases → 20 points (Excellent)' },
-            { range: '1-2', points: 10, label: '1-2 cases → 10 points (Good)' },
-            { range: '3-4', points: 5, label: '3-4 cases → 5 points (Fair)' },
-            { range: '>=5', points: 0, label: '≥5 cases → 0 points (Poor)' }
-          ]),
-          is_active: isPG ? true : 1,
-          display_order: 4
-        },
-        {
-          id: 'ind_atr',
-          code: 'ATR',
-          name: 'ATR Responsiveness',
-          description: 'Timeliness of Action Taken Report submissions',
-          category: 'responsiveness',
-          weight: 10,
-          max_score: 10,
-          scoring_method: 'conditional',
-          parameters: JSON.stringify([
-            {
-              id: 'total_atrs',
-              code: 'total_atrs',
-              label: 'Total ATRs',
-              type: 'number',
-              description: 'Total number of ATRs (Action Taken Reports) requested',
-              required: true,
-              validation: { min: 1 }
-            },
-            {
-              id: 'atrs_submitted_on_time',
-              code: 'atrs_submitted_on_time',
-              label: 'ATRs Submitted On Time',
-              type: 'number',
-              description: 'Number of ATRs submitted within ACC deadlines',
-              required: true,
-              validation: { min: 0 }
-            }
-          ]),
-          scoring_rules: JSON.stringify([
-            { condition: '>=90', points: 10, label: '≥90% → 10 points (Excellent)' },
-            { condition: '>=70', points: 7, label: '70-89% → 7 points (Satisfactory)' },
-            { condition: '<70', points: 3, label: '<70% → 3 points (Needs Improvement)' }
-          ]),
-          is_active: isPG ? true : 1,
-          display_order: 5
-        }
-      ];
-      
-      for (const indicator of indicators) {
-        if (isPG) {
-          await runAsync(db, `
-            INSERT INTO indicators (
-              id, code, name, description, category, weight, max_score, scoring_method,
-              parameters, scoring_rules, is_active, display_order, created_by, updated_by
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-          `, [
-            indicator.id, indicator.code, indicator.name, indicator.description,
-            indicator.category, indicator.weight, indicator.max_score, indicator.scoring_method,
-            indicator.parameters, indicator.scoring_rules, indicator.is_active,
-            indicator.display_order, 'system', 'system'
-          ]);
-        } else {
-          await runAsync(db, `
-            INSERT INTO indicators (
-              id, code, name, description, category, weight, max_score, scoring_method,
-              parameters, scoring_rules, is_active, display_order, created_by, updated_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `, [
-            indicator.id, indicator.code, indicator.name, indicator.description,
-            indicator.category, indicator.weight, indicator.max_score, indicator.scoring_method,
-            indicator.parameters, indicator.scoring_rules, indicator.is_active,
-            indicator.display_order, 'system', 'system'
-          ]);
-        }
-      }
-      
-      console.log('✅ Created all 5 AIMS indicators with parameters and scoring rules');
-    }
+    // ==================== DELETE OLD INDICATORS ====================
+    await runAsync(db, `DELETE FROM indicators`, []);
+    console.log('🗑️ Cleared existing indicators');
+    
+    // ==================== SEED 5 AIMS INDICATORS (REVISED VERSION 3) ====================
+    console.log('\n📊 Creating 5 AIMS indicators per Revised Framework Version 3...');
+    
+    // Indicator 1: Internal Corruption Control Systems (ICCS) - 32 points
+    await runAsync(db, `
+      INSERT INTO indicators (
+        id, code, name, description, category, weight, max_score, scoring_method,
+        parameters, scoring_rules, is_active, display_order, created_by, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `, [
+      'ind_iccs_v3', 'ICCS_V3', 'Internal Corruption Control Systems',
+      'Functioning of agency\'s four core integrity systems: Code of Conduct, Complaint Management, Conflict of Interest, and Gift Management',
+      'compliance', 32, 32, 'maturity',
+      JSON.stringify([
+        { id: 'code_of_conduct', name: 'Code of Conduct', maxPoints: 10, levels: [4, 7, 10] },
+        { id: 'complaint_management', name: 'Complaint Management', maxPoints: 8, levels: [4, 6, 8] },
+        { id: 'conflict_of_interest', name: 'Conflict of Interest', maxPoints: 8, levels: [4, 6, 8] },
+        { id: 'gift_management', name: 'Gift Management', maxPoints: 6, levels: [4, 6, 8] }
+      ]),
+      JSON.stringify({
+        version: 3,
+        framework: 'AIMS Revised Framework V3',
+        scoringType: 'maturity_sum',
+        levels: [
+          { level: 0, name: 'Nascent', points: 0, description: 'System is non-existent' },
+          { level: 1, name: 'Foundational', points: 4, description: 'Basic systems exist on paper, staff have general awareness' },
+          { level: 2, name: 'Established', points: 6, description: 'Systems are operational and consistently used' },
+          { level: 3, name: 'Advanced', points: 8, description: 'Systems embedded in culture, data analyzed for improvement' }
+        ]
+      }),
+      isPG ? true : 1, 1, 'system', 'system'
+    ]);
+    console.log('✅ Indicator 1: ICCS_V3 (32 points)');
+
+    // Indicator 2: Integrity Capacity Building - 24 points
+    await runAsync(db, `
+      INSERT INTO indicators (
+        id, code, name, description, category, weight, max_score, scoring_method,
+        parameters, scoring_rules, is_active, display_order, created_by, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `, [
+      'ind_training_v3', 'TRAINING_V3', 'Integrity Capacity Building',
+      'Investment in building integrity capabilities of employees through ACC e-Learning or equivalent training',
+      'capacity', 24, 24, 'maturity',
+      JSON.stringify([
+        { id: 'completion_rate', name: 'Training Completion Rate', type: 'percentage', required: true }
+      ]),
+      JSON.stringify({
+        version: 3,
+        framework: 'AIMS Revised Framework V3',
+        scoringType: 'maturity_threshold',
+        levels: [
+          { minPercentage: 85, level: 3, points: 24, name: 'Advanced' },
+          { minPercentage: 70, maxPercentage: 84, level: 2, points: 18, name: 'Established' },
+          { minPercentage: 50, maxPercentage: 69, level: 1, points: 10, name: 'Foundational' },
+          { minPercentage: 0, maxPercentage: 49, level: 0, points: 0, name: 'Nascent' }
+        ]
+      }),
+      isPG ? true : 1, 2, 'system', 'system'
+    ]);
+    console.log('✅ Indicator 2: TRAINING_V3 (24 points)');
+
+    // Indicator 3: Asset Declaration Compliance - 14 points
+    await runAsync(db, `
+      INSERT INTO indicators (
+        id, code, name, description, category, weight, max_score, scoring_method,
+        parameters, scoring_rules, is_active, display_order, created_by, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `, [
+      'ind_ad_v3', 'AD_V3', 'Asset Declaration Compliance',
+      'Integrity of asset declaration process measured by percentage of covered officials submitting on time',
+      'compliance', 14, 14, 'maturity',
+      JSON.stringify([
+        { id: 'submission_rate', name: 'On-time Submission Rate', type: 'percentage', required: true }
+      ]),
+      JSON.stringify({
+        version: 3,
+        framework: 'AIMS Revised Framework V3',
+        scoringType: 'maturity_threshold',
+        levels: [
+          { minPercentage: 100, level: 3, points: 14, name: 'Advanced' },
+          { minPercentage: 95, maxPercentage: 99, level: 2, points: 10, name: 'Established' },
+          { minPercentage: 90, maxPercentage: 94, level: 1, points: 5, name: 'Foundational' },
+          { minPercentage: 0, maxPercentage: 89, level: 0, points: 0, name: 'Nascent' }
+        ]
+      }),
+      isPG ? true : 1, 3, 'system', 'system'
+    ]);
+    console.log('✅ Indicator 3: AD_V3 (14 points)');
+
+    // Indicator 4: Code of Conduct Awareness & Application - 10 points
+    await runAsync(db, `
+      INSERT INTO indicators (
+        id, code, name, description, category, weight, max_score, scoring_method,
+        parameters, scoring_rules, is_active, display_order, created_by, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `, [
+      'ind_coc_v3', 'COC_V3', 'Code of Conduct Awareness & Application',
+      'How well the Code of Conduct is integrated into agency culture, operations, and ethical decision-making',
+      'capacity', 10, 10, 'maturity',
+      JSON.stringify([
+        { id: 'coc_maturity', name: 'CoC Maturity Level', type: 'select', required: true,
+          options: ['Foundational', 'Established', 'Advanced'] }
+      ]),
+      JSON.stringify({
+        version: 3,
+        framework: 'AIMS Revised Framework V3',
+        scoringType: 'maturity_single',
+        levels: [
+          { level: 0, points: 0, name: 'Nascent', description: 'CoC is non-existent' },
+          { level: 1, points: 4, name: 'Foundational', description: 'CoC exists, is accessible, staff aware' },
+          { level: 2, points: 7, name: 'Established', description: 'CoC integrated into HR processes, regular training, data collection' },
+          { level: 3, points: 10, name: 'Advanced', description: 'CoC embedded in culture, risk analysis, case studies, staff confidence' }
+        ]
+      }),
+      isPG ? true : 1, 4, 'system', 'system'
+    ]);
+    console.log('✅ Indicator 4: COC_V3 (10 points)');
+
+    // Indicator 5: Corruption Case Severity - 20 points
+    await runAsync(db, `
+      INSERT INTO indicators (
+        id, code, name, description, category, weight, max_score, scoring_method,
+        parameters, scoring_rules, is_active, display_order, created_by, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `, [
+      'ind_cases_v3', 'CASES_V3', 'Corruption Case Severity',
+      'Weighted severity of substantiated corruption cases involving agency staff',
+      'enforcement', 20, 20, 'weighted',
+      JSON.stringify([
+        { id: 'convictions', code: 'convictions', label: 'Convictions', type: 'number', weight: 3, description: 'Conviction by court of law' },
+        { id: 'prosecutions', code: 'prosecutions', label: 'Prosecutions/OAG Referrals', type: 'number', weight: 2, description: 'Prosecution filed or referred to OAG' },
+        { id: 'admin_actions', code: 'admin_actions', label: 'ACC-confirmed Administrative Actions', type: 'number', weight: 1, description: 'Confirmed administrative action by ACC' }
+      ]),
+      JSON.stringify({
+        version: 3,
+        framework: 'AIMS Revised Framework V3',
+        scoringType: 'inverse_weighted',
+        ranges: [
+          { min: 0, max: 0, points: 20, label: '0 cases → 20 points (Excellent)' },
+          { min: 1, max: 2, points: 12, label: '1-2 severity points → 12 points' },
+          { min: 3, max: 4, points: 6, label: '3-4 severity points → 6 points' },
+          { min: 5, max: null, points: 0, label: '≥5 severity points → 0 points' }
+        ]
+      }),
+      isPG ? true : 1, 5, 'system', 'system'
+    ]);
+    console.log('✅ Indicator 5: CASES_V3 (20 points)');
+    
+    console.log('\n✅ Created all 5 AIMS indicators with Revised Framework V3 (maturity-based scoring)');
+    console.log('   Total score: 32 + 24 + 14 + 10 + 20 = 100 points');
 
     // ==================== SEED AIMS ASSESSMENT FORM TEMPLATE ====================
     const templateCount = await getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM form_templates');
     if (templateCount?.count === 0) {
-      console.log('\n📝 Creating AIMS Assessment Form Template...');
+      console.log('\n📝 Creating AIMS Assessment Form Template (Revised V3)...');
       
-      const template = {
-        id: 'template_aims_assessment',
-        name: 'AIMS Assessment Form (Official Sept 2025)',
-        description: 'Standard AIMS assessment form with all 5 indicators per official guideline',
-        template_type: 'assessment',
-        indicator_ids: JSON.stringify(['ind_iccs', 'ind_training', 'ind_ad', 'ind_cases', 'ind_atr']),
-        sections: JSON.stringify([
-          {
-            id: 'section_basic',
-            title: 'Agency Information',
-            description: 'Basic agency details required for assessment',
-            fields: [
-              { id: 'field_agency_name', type: 'text', name: 'agency_name', label: 'Agency Name', required: true, parameterCode: 'agency_name' },
-              { id: 'field_fiscal_year', type: 'text', name: 'fiscal_year', label: 'Fiscal Year', required: true, parameterCode: 'fiscal_year', defaultValue: `${new Date().getFullYear()}` },
-              { id: 'field_contact_person', type: 'text', name: 'contact_person', label: 'Contact Person', required: true, parameterCode: 'contact_person' }
-            ]
-          },
-          {
-            id: 'section_iccs',
-            title: 'Indicator 1: Internal Corruption Control Systems (ICCS) - 28 points',
-            description: 'Functioning of the agency\'s four core integrity systems',
-            fields: [
-              { id: 'field_complaint_exists', type: 'checkbox', name: 'complaint_exists', label: 'Complaint Management System Exists', required: true, parameterCode: 'complaint_exists' },
-              { id: 'field_complaint_functions', type: 'checkbox', name: 'complaint_functions', label: 'Complaint Management System Functions', required: true, parameterCode: 'complaint_functions' },
-              { id: 'field_conflict_exists', type: 'checkbox', name: 'conflict_exists', label: 'Conflict of Interest System Exists', required: true, parameterCode: 'conflict_exists' },
-              { id: 'field_conflict_functions', type: 'checkbox', name: 'conflict_functions', label: 'Conflict of Interest System Functions', required: true, parameterCode: 'conflict_functions' },
-              { id: 'field_gift_exists', type: 'checkbox', name: 'gift_exists', label: 'Gift Register System Exists', required: true, parameterCode: 'gift_exists' },
-              { id: 'field_gift_functions', type: 'checkbox', name: 'gift_functions', label: 'Gift Register System Functions', required: true, parameterCode: 'gift_functions' },
-              { 
-                id: 'field_proactive_level', 
-                type: 'select', 
-                name: 'proactive_level', 
-                label: 'Proactive Measures Level', 
-                required: true, 
-                parameterCode: 'proactive_level',
-                options: [
-                  { value: 'level1', label: 'Level 1: ACC Recommendations Present & Functioning (7 points)' },
-                  { value: 'level2', label: 'Level 2: No Recommendations & No Proactive Measures (3 points)' },
-                  { value: 'level3', label: 'Level 3: ACC Recommendations Exist But Not Implemented (0 points)' }
-                ]
-              }
-            ]
-          },
-          {
-            id: 'section_training',
-            title: 'Indicator 2: Integrity Capacity Building - 26 points',
-            description: 'Staff training and e-learning completion',
-            fields: [
-              { id: 'field_total_employees', type: 'number', name: 'total_employees', label: 'Total Employees', required: true, parameterCode: 'total_employees', min: 1 },
-              { id: 'field_completed_employees', type: 'number', name: 'completed_employees', label: 'Completed Employees', required: true, parameterCode: 'completed_employees', min: 0 }
-            ]
-          },
-          {
-            id: 'section_ad',
-            title: 'Indicator 3: Asset Declaration (AD) Compliance - 16 points',
-            description: 'Asset declaration submission compliance',
-            fields: [
-              { id: 'field_total_covered_officials', type: 'number', name: 'total_covered_officials', label: 'Total Covered Officials', required: true, parameterCode: 'total_covered_officials', min: 1 },
-              { id: 'field_officials_submitted_on_time', type: 'number', name: 'officials_submitted_on_time', label: 'Officials Submitted On Time', required: true, parameterCode: 'officials_submitted_on_time', min: 0 }
-            ]
-          },
-          {
-            id: 'section_cases',
-            title: 'Indicator 4: Corruption Case Severity & Resolution - 20 points',
-            description: 'Weighted severity of corruption cases involving agency staff',
-            fields: [
-              { id: 'field_convictions', type: 'number', name: 'convictions', label: 'Convictions', parameterCode: 'convictions', min: 0, defaultValue: 0 },
-              { id: 'field_prosecutions', type: 'number', name: 'prosecutions', label: 'Prosecutions/OAG Referrals', parameterCode: 'prosecutions', min: 0, defaultValue: 0 },
-              { id: 'field_admin_actions', type: 'number', name: 'admin_actions', label: 'Administrative Actions', parameterCode: 'admin_actions', min: 0, defaultValue: 0 }
-            ]
-          },
-          {
-            id: 'section_atr',
-            title: 'Indicator 5: ATR Responsiveness - 10 points',
-            description: 'Timeliness of Action Taken Report submissions',
-            fields: [
-              { id: 'field_total_atrs', type: 'number', name: 'total_atrs', label: 'Total ATRs', required: true, parameterCode: 'total_atrs', min: 1 },
-              { id: 'field_atrs_submitted_on_time', type: 'number', name: 'atrs_submitted_on_time', label: 'ATRs Submitted On Time', required: true, parameterCode: 'atrs_submitted_on_time', min: 0 }
-            ]
-          }
-        ]),
-        version: '1.0.0',
-        is_active: isPG ? true : 1,
-        created_by: 'system',
-        updated_by: 'system',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
+      const templateId = 'template_aims_assessment_v3';
+      const sections = JSON.stringify([
+        {
+          id: 'section_basic',
+          title: 'Agency Information',
+          description: 'Basic agency details required for assessment',
+          fields: [
+            { id: 'field_agency_name', type: 'text', name: 'agency_name', label: 'Agency Name', required: true },
+            { id: 'field_fiscal_year', type: 'text', name: 'fiscal_year', label: 'Fiscal Year', required: true, defaultValue: `${new Date().getFullYear()}` }
+          ]
+        },
+        {
+          id: 'section_iccs',
+          title: 'Indicator 1: Internal Corruption Control Systems (ICCS) - 32 points',
+          description: 'Assess maturity of four core integrity systems',
+          fields: [
+            { id: 'code_of_conduct', type: 'select', name: 'code_of_conduct_level', label: 'Code of Conduct Maturity', required: true,
+              options: [
+                { value: 1, label: 'Level 1: Foundational (4 pts) - Policy exists, accessible, basic awareness' },
+                { value: 2, label: 'Level 2: Established (7 pts) - Integrated into HR, regular training, data collection' },
+                { value: 3, label: 'Level 3: Advanced (10 pts) - Embedded in culture, risk analysis, case studies' }
+              ] },
+            { id: 'complaint_management', type: 'select', name: 'complaint_maturity_level', label: 'Complaint Management Maturity', required: true,
+              options: [
+                { value: 1, label: 'Level 1: Foundational (4 pts) - Basic mechanism exists, register maintained' },
+                { value: 2, label: 'Level 2: Established (6 pts) - Systematic processing, timely resolution' },
+                { value: 3, label: 'Level 3: Advanced (8 pts) - Proactive analysis, learning from cases' }
+              ] },
+            { id: 'conflict_of_interest', type: 'select', name: 'coi_maturity_level', label: 'Conflict of Interest Maturity', required: true,
+              options: [
+                { value: 1, label: 'Level 1: Foundational (4 pts) - Policy exists, declaration forms available' },
+                { value: 2, label: 'Level 2: Established (6 pts) - Regular declarations, management actions' },
+                { value: 3, label: 'Level 3: Advanced (8 pts) - Risk assessments, cross-referencing, audits' }
+              ] },
+            { id: 'gift_management', type: 'select', name: 'gift_maturity_level', label: 'Gift Management Maturity', required: true,
+              options: [
+                { value: 1, label: 'Level 1: Foundational (4 pts) - GDA designated, register exists' },
+                { value: 2, label: 'Level 2: Established (6 pts) - Consistent disclosure, committee reviews' },
+                { value: 3, label: 'Level 3: Advanced (8 pts) - Data analysis, integration with CoI, audits' }
+              ] }
+          ]
+        },
+        {
+          id: 'section_training',
+          title: 'Indicator 2: Integrity Capacity Building - 24 points',
+          description: 'Staff training completion rates',
+          fields: [
+            { id: 'total_employees', type: 'number', name: 'total_employees', label: 'Total Employees', required: true, min: 1 },
+            { id: 'completed_employees', type: 'number', name: 'completed_employees', label: 'Employees Completed ACC e-Learning', required: true, min: 0 }
+          ]
+        },
+        {
+          id: 'section_ad',
+          title: 'Indicator 3: Asset Declaration Compliance - 14 points',
+          description: 'On-time submission rates',
+          fields: [
+            { id: 'total_covered_officials', type: 'number', name: 'total_covered_officials', label: 'Total Covered Officials', required: true, min: 1 },
+            { id: 'officials_submitted_on_time', type: 'number', name: 'officials_submitted_on_time', label: 'Officials Submitted On Time', required: true, min: 0 }
+          ]
+        },
+        {
+          id: 'section_coc',
+          title: 'Indicator 4: Code of Conduct Awareness & Application - 10 points',
+          description: 'Assess maturity of Code of Conduct integration',
+          fields: [
+            { id: 'coc_maturity', type: 'select', name: 'coc_maturity_level', label: 'Code of Conduct Maturity', required: true,
+              options: [
+                { value: 1, label: 'Level 1: Foundational (4 pts) - Policy exists, accessible, staff aware' },
+                { value: 2, label: 'Level 2: Established (7 pts) - Integrated into HR processes, regular training' },
+                { value: 3, label: 'Level 3: Advanced (10 pts) - Embedded in culture, risk analysis, staff confidence' }
+              ] }
+          ]
+        },
+        {
+          id: 'section_cases',
+          title: 'Indicator 5: Corruption Case Severity - 20 points',
+          description: 'Substantiated corruption cases involving agency staff',
+          fields: [
+            { id: 'convictions', type: 'number', name: 'convictions', label: 'Convictions (3 points each)', min: 0, defaultValue: 0 },
+            { id: 'prosecutions', type: 'number', name: 'prosecutions', label: 'Prosecutions/OAG Referrals (2 points each)', min: 0, defaultValue: 0 },
+            { id: 'admin_actions', type: 'number', name: 'admin_actions', label: 'ACC-confirmed Administrative Actions (1 point each)', min: 0, defaultValue: 0 }
+          ]
+        }
+      ]);
       
       if (isPG) {
         await runAsync(db, `
@@ -1035,18 +815,18 @@ async function initializeDefaultData() {
             id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by, created_at, updated_at
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `, [
-          template.id,
-          template.name,
-          template.description,
-          template.template_type,
-          template.indicator_ids,
-          template.sections,
-          template.version,
-          template.is_active,
-          template.created_by,
-          template.updated_by,
-          template.created_at,
-          template.updated_at
+          templateId,
+          'AIMS Assessment Form (Revised Framework V3)',
+          'Standard AIMS assessment form with 5 indicators using maturity-based scoring (Total 100 points)',
+          'assessment',
+          JSON.stringify(['ind_iccs_v3', 'ind_training_v3', 'ind_ad_v3', 'ind_coc_v3', 'ind_cases_v3']),
+          sections,
+          '3.0.0',
+          isPG ? true : 1,
+          'system',
+          'system',
+          new Date().toISOString(),
+          new Date().toISOString()
         ]);
       } else {
         await runAsync(db, `
@@ -1054,27 +834,28 @@ async function initializeDefaultData() {
             id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
-          template.id,
-          template.name,
-          template.description,
-          template.template_type,
-          template.indicator_ids,
-          template.sections,
-          template.version,
-          template.is_active,
-          template.created_by,
-          template.updated_by,
-          template.created_at,
-          template.updated_at
+          templateId,
+          'AIMS Assessment Form (Revised Framework V3)',
+          'Standard AIMS assessment form with 5 indicators using maturity-based scoring (Total 100 points)',
+          'assessment',
+          JSON.stringify(['ind_iccs_v3', 'ind_training_v3', 'ind_ad_v3', 'ind_coc_v3', 'ind_cases_v3']),
+          sections,
+          '3.0.0',
+          isPG ? true : 1,
+          'system',
+          'system',
+          new Date().toISOString(),
+          new Date().toISOString()
         ]);
       }
       
-      console.log('✅ Created AIMS Assessment Form Template');
+      console.log('✅ Created AIMS Assessment Form Template (V3)');
     }
 
-    console.log('\n🎉 SUCCESS: All AIMS data seeded from official guideline!');
-    console.log('✅ 5 Indicators created with parameters and scoring rules');
-    console.log('✅ AIMS Assessment Form Template created');
+    console.log('\n🎉 SUCCESS: All AIMS data seeded from Revised Framework Version 3!');
+    console.log('✅ 5 Indicators created with maturity-based scoring');
+    console.log('✅ Total Score: 100 points (32 + 24 + 14 + 10 + 20)');
+    console.log('✅ AIMS Assessment Form Template (V3) created');
     console.log('✅ Admin user: admin@acc.gov / admin123');
   } catch (error) {
     console.error('\n❌ FAILED to seed default data:', getErrorMessage(error));
@@ -1095,6 +876,7 @@ export async function initializeDatabase() {
   try {
     console.log('\n🚀 Initializing AIMS Database...');
     console.log(`📊 Database type: ${usePostgres ? 'PostgreSQL' : 'SQLite'}`);
+    console.log(`📋 Framework: AIMS Revised Framework Version 3`);
     
     await createTables();
     await initializeDefaultData();
@@ -1108,13 +890,15 @@ export async function initializeDatabase() {
     };
     
     console.log('\n✅ DATABASE INITIALIZATION COMPLETE');
-    console.log(`📊 Seeded Data Summary:`);
+    console.log(`📊 Seeded Data Summary (AIMS V3):`);
     console.log(`   - Indicators: ${counts.indicators} (should be 5)`);
     console.log(`   - Form Templates: ${counts.templates} (should be 1)`);
     console.log(`   - Admin Users: ${counts.users} (should be 1)`);
+    console.log(`   - Total Score: 100 points`);
     
     if (counts.indicators === 5 && counts.templates === 1 && counts.users === 1) {
       console.log('\n✨ READY FOR AIMS ASSESSMENT TESTING!');
+      console.log('✅ Framework: Revised AIMS V3 (Maturity-based scoring)');
       console.log('✅ Default admin: admin@acc.gov / admin123');
     } else {
       console.warn('\n⚠️ WARNING: Seeded data counts don\'t match expectations!');
