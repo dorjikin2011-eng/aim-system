@@ -22,7 +22,7 @@ export default function NominateFocal() {
     setSuccess('');
 
     try {
-      const response = await fetch('/api/hoa/nominate-focal', {
+      const response = await fetch('${API_BASE}/api/hoa/nominate-focal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

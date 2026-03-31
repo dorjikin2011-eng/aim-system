@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AgencyCard from '../../components/AgencyCard';
+import { API_BASE } from '../../config';
 import { 
   BuildingOfficeIcon, 
   HomeIcon,
@@ -35,7 +36,7 @@ export default function AgencyList() {
   const fetchAgencies = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/admin/agencies');
+      const res = await fetch('${API_BASE}/api/admin/agencies');
       if (!res.ok) throw new Error('Failed to fetch agencies');
       const data = await res.json();
       setAgencies(data.agencies);
@@ -61,7 +62,7 @@ export default function AgencyList() {
     if (!confirm(`Delete agency "${agency.name}"? This cannot be undone.`)) return;
 
     try {
-      const res = await fetch(`/api/admin/agencies/${agency.id}`, {
+      const res = await fetch(`${API_BASE}/api/admin/agencies/${agency.id}`, {
         method: 'DELETE'
       });
       if (!res.ok) {

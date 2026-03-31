@@ -24,7 +24,7 @@ export default function EvidenceUpload({ files, setFiles }: EvidenceUploadProps)
     }
 
     try {
-      const response = await fetch('/api/evidence/upload', {
+      const response = await fetch('${API_BASE}/api/evidence/upload', {
         method: 'POST',
         body: formData
       });

@@ -1,6 +1,7 @@
 // frontend/src/pages/admin/AssignmentManager.tsx - CORRECTED
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { API_BASE } from '../../config';
 import {
   UserGroupIcon,
   BuildingOfficeIcon,
@@ -76,10 +77,10 @@ export default function AssignmentManager() {
     
     try {
       const [officersRes, agenciesRes, assignmentsRes, statsRes] = await Promise.all([
-        fetch('/api/admin/assignments/available-officers'),
-        fetch('/api/admin/assignments/unassigned-agencies'),
-        fetch('/api/admin/assignments'),
-        fetch('/api/admin/assignments/stats')
+        fetch('${API_BASE}/api/admin/assignments/available-officers'),
+        fetch('${API_BASE}/api/admin/assignments/unassigned-agencies'),
+        fetch('${API_BASE}/api/admin/assignments'),
+        fetch('${API_BASE}/api/admin/assignments/stats')
       ]);
 
       if (!officersRes.ok || !agenciesRes.ok || !assignmentsRes.ok || !statsRes.ok) {
@@ -115,7 +116,7 @@ export default function AssignmentManager() {
     setError('');
     
     try {
-      const response = await fetch('/api/admin/assignments', {
+      const response = await fetch('${API_BASE}/api/admin/assignments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -151,7 +152,7 @@ export default function AssignmentManager() {
     if (!confirm('Are you sure you want to remove this assignment?')) return;
 
     try {
-      const response = await fetch(`/api/admin/assignments/${assignmentId}`, {
+      const response = await fetch(`${API_BASE}/api/admin/assignments/${assignmentId}`, {
         method: 'DELETE'
       });
 

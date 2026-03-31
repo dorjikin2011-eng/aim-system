@@ -63,7 +63,7 @@ export function AdminStatsProvider({ children }: { children: ReactNode }) {
   
   try {
     setLoading(true);
-    const res = await axios.get('/api/admin/stats', {
+    const res = await axios.get('${API_BASE}/api/admin/stats', {
   withCredentials: true
 });
 

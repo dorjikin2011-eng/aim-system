@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePendingNominations } from '../../hooks/useFocalNominations';
 import { UserGroupIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { API_BASE } from '../../config';
 
 /*
 interface FocalNomination {
@@ -31,7 +32,7 @@ export default function FocalNominations() {
 
     setProcessing(nominationId);
     try {
-      const response = await fetch(`/api/admin/focal-nominations/${nominationId}/approve`, {
+      const response = await fetch(`${API_BASE}/api/admin/focal-nominations/${nominationId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -62,7 +63,7 @@ export default function FocalNominations() {
 
     setProcessing(nominationId);
     try {
-      const response = await fetch(`/api/admin/focal-nominations/${nominationId}/reject`, {
+      const response = await fetch(`${API_BASE}/api/admin/focal-nominations/${nominationId}/reject`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

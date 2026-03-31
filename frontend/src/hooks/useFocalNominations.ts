@@ -22,7 +22,7 @@ export function useHoaNominations() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/hoa/nominations', {
+      const response = await fetch('${API_BASE}/api/hoa/nominations', {
         credentials: 'include'
       });
       
@@ -56,7 +56,7 @@ export function usePendingNominations() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/admin/focal-nominations', {
+      const response = await fetch('${API_BASE}/api/admin/focal-nominations', {
         credentials: 'include'
       });
       

@@ -1,6 +1,7 @@
 // frontend/src/pages/admin/AgencyForm.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { API_BASE } from '../../config';
 
 interface Agency {
   id?: string;
@@ -53,7 +54,7 @@ export default function AgencyForm() {
 
   const fetchAgency = async (id: string) => {
     try {
-      const res = await fetch(`/api/admin/agencies/${id}`);
+      const res = await fetch(`${API_BASE}/api/admin/agencies/${id}`);
       if (!res.ok) {
         throw new Error('Failed to load agency');
       }
@@ -80,7 +81,7 @@ export default function AgencyForm() {
     setError('');
 
     try {
-      const url = id ? `/api/admin/agencies/${id}` : '/api/admin/agencies';
+      const url = id ? `${API_BASE}/api/admin/agencies/${id}` : '${API_BASE}/api/admin/agencies';
       const method = id ? 'PUT' : 'POST';
 
       // ✅ FIXED: Map frontend state to backend expected format

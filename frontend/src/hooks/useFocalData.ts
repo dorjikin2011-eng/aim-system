@@ -37,7 +37,7 @@ export function useFocalData() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/focal/indicators', {
+      const response = await fetch('${API_BASE}/api/focal/indicators', {
         credentials: 'include'
       });
       

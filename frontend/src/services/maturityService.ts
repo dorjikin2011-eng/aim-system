@@ -13,7 +13,7 @@ import type {
 import type { ApiResponse } from '../types/config';
 
 class MaturityService {
-  private baseUrl = '/api/maturity';
+  private baseUrl = '${API_BASE}/api/maturity';
 
   private async handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
     try {

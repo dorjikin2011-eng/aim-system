@@ -15,7 +15,7 @@ let pgPool: Pool | null = null;
 let sqliteDb: sqlite3.Database | null = null;
 
 // ============================================================================
-// PostgreSQL Connection Management
+// PostgreSQL Connection Management (Supabase-ready)
 // ============================================================================
 export function getPostgres(): Pool {
   if (!pgPool) {
@@ -23,28 +23,36 @@ export function getPostgres(): Pool {
 
     pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+      ssl: { rejectUnauthorized: false },
       max: 20,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      connectionTimeoutMillis: 10000,
     });
 
     pgPool.on('error', (err) => {
       console.error('❌ Unexpected PostgreSQL error:', err.message);
     });
 
-    pgPool.connect()
-      .then(client => {
-        console.log('✅ PostgreSQL connected');
-        client.release();
-      })
-      .catch(err => {
+    // Test connection synchronously
+    (async () => {
+      let client = null;
+      try {
+        client = await pgPool!.connect();
+        console.log('✅ PostgreSQL connected successfully');
+      } catch (err: any) {
         console.error('❌ PostgreSQL connection failed:', err.message);
-        if (isProduction) {
+        console.error('💡 TROUBLESHOOTING:');
+        console.error('   1. Use Supabase POOLER connection (port 6543), NOT direct (port 5432)');
+        console.error('   2. Format: postgresql://postgres.[ref]:pass@aws-0-[region].pooler.supabase.com:6543/postgres');
+        console.error('   3. Check your DATABASE_URL environment variable');
+        if (process.env.NODE_ENV === 'production') {
           console.error('🚨 Production database connection failed. Exiting...');
           process.exit(1);
         }
-      });
+      } finally {
+        if (client) client.release();
+      }
+    })();
   }
 
   return pgPool;
@@ -98,6 +106,16 @@ export function isUsingPostgres(): boolean {
 }
 
 // ============================================================================
+// Helper function to convert SQLite ? placeholders to PostgreSQL $1, $2, etc.
+// ============================================================================
+function convertPlaceholders(sql: string): string {
+  if (!sql.includes('?')) return sql;
+  
+  let paramIndex = 1;
+  return sql.replace(/\?/g, () => `$${paramIndex++}`);
+}
+
+// ============================================================================
 // Unified Async Query Functions
 // ============================================================================
 
@@ -107,16 +125,7 @@ export async function runAsync(db: sqlite3.Database | Pool, sql: string, params:
     // PostgreSQL
     const client = await db.connect();
     try {
-      // Convert SQLite parameter placeholders (?) to PostgreSQL ($1, $2, etc.)
-      let pgSql = sql;
-      if (sql.includes('?')) {
-        pgSql = sql.replace(/\?/g, (match, offset) => {
-          const index = sql.substring(0, offset).split('?').length;
-          return `$${index}`;
-        });
-      }
-      
-      // Convert SQLite datetime functions to PostgreSQL
+      let pgSql = convertPlaceholders(sql);
       pgSql = pgSql.replace(/CURRENT_TIMESTAMP/gi, 'CURRENT_TIMESTAMP');
       pgSql = pgSql.replace(/DATETIME\(/gi, 'TIMESTAMP(');
       
@@ -142,14 +151,7 @@ export async function getAsync<T>(db: sqlite3.Database | Pool, sql: string, para
     // PostgreSQL
     const client = await db.connect();
     try {
-      let pgSql = sql;
-      if (sql.includes('?')) {
-        pgSql = sql.replace(/\?/g, (match, offset) => {
-          const index = sql.substring(0, offset).split('?').length;
-          return `$${index}`;
-        });
-      }
-      
+      let pgSql = convertPlaceholders(sql);
       pgSql = pgSql.replace(/CURRENT_TIMESTAMP/gi, 'CURRENT_TIMESTAMP');
       pgSql = pgSql.replace(/DATETIME\(/gi, 'TIMESTAMP(');
       
@@ -175,14 +177,7 @@ export async function allAsync<T = any>(db: sqlite3.Database | Pool, sql: string
     // PostgreSQL
     const client = await db.connect();
     try {
-      let pgSql = sql;
-      if (sql.includes('?')) {
-        pgSql = sql.replace(/\?/g, (match, offset) => {
-          const index = sql.substring(0, offset).split('?').length;
-          return `$${index}`;
-        });
-      }
-      
+      let pgSql = convertPlaceholders(sql);
       pgSql = pgSql.replace(/CURRENT_TIMESTAMP/gi, 'CURRENT_TIMESTAMP');
       pgSql = pgSql.replace(/DATETIME\(/gi, 'TIMESTAMP(');
       

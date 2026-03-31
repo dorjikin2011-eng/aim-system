@@ -1,6 +1,7 @@
 // frontend/src/pages/prevention/AgencyAssessment/common/aimsStorage.ts
 
 import type { BaseMeta, EvidenceFile } from './aimsTypes';
+import { API_BASE } from '../../../../config';
 
 export interface AssessmentPayload {
   rawData: Record<string, any>;
@@ -15,7 +16,7 @@ export interface AssessmentPayload {
 export async function saveAssessment(indicatorId: number, payload: AssessmentPayload): Promise<void> {
   const agencyId = getCurrentAgencyId();
   
-  const response = await fetch(`/api/agency/${agencyId}/assessment/save`, {
+  const response = await fetch(`${API_BASE}/api/agency/${agencyId}/assessment/save`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -43,7 +44,7 @@ export async function saveAssessment(indicatorId: number, payload: AssessmentPay
 export async function loadAssessment(indicatorId: number): Promise<AssessmentPayload | null> {
   const agencyId = getCurrentAgencyId();
   
-  const response = await fetch(`/api/agency/${agencyId}/assessment?fy=2024–25`);
+  const response = await fetch(`${API_BASE}/api/agency/${agencyId}/assessment?fy=2024–25`);
   
   if (!response.ok) {
     if (response.status === 404) return null;

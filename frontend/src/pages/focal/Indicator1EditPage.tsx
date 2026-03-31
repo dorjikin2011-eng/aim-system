@@ -44,7 +44,7 @@ export default function Indicator1EditPage() {
   const fetchIndicator1 = async (assessmentId: string) => {
     try {
       setLoading(true);
-      const response = await fetch('/api/focal/indicators', {
+      const response = await fetch('${API_BASE}/api/focal/indicators', {
         credentials: 'include'
       });
       
@@ -114,7 +114,7 @@ export default function Indicator1EditPage() {
       // Convert EvidenceFile[] back to string[] for API
       const evidenceFilePaths = evidenceFiles.map(file => file.path);
 
-      const response = await fetch('/api/focal/save-indicator', {
+      const response = await fetch('${API_BASE}/api/focal/save-indicator', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

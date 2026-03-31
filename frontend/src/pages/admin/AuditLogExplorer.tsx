@@ -11,7 +11,7 @@ export default function AuditLogExplorer() {
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const res = await fetch('/api/admin/logs');
+        const res = await fetch('${API_BASE}/api/admin/logs');
         if (!res.ok) throw new Error('Failed to load logs');
         const data = await res.json();
         setLogs(data.logs);

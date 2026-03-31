@@ -62,7 +62,7 @@ export default function ChangePasswordModal({ isOpen, onClose }: ChangePasswordM
     setSuccess(false);
 
     try {
-      const response = await fetch('/api/auth/change-password', {
+      const response = await fetch('${API_BASE}/api/auth/change-password', {
         method: 'POST',
         credentials: 'include',
         headers: {

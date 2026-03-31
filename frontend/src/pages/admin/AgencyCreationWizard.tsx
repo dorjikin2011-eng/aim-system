@@ -71,7 +71,7 @@ export default function AgencyCreationWizard() {
     setFetchingUsers(true);
     setError('');
     try {
-      const res = await fetch('/api/admin/agencies/users/potential-hoas', {
+      const res = await fetch('${API_BASE}/api/admin/agencies/users/potential-hoas', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
@@ -520,7 +520,7 @@ export default function AgencyCreationWizard() {
       };
 
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/admin/agencies/create-with-hoa', {
+      const res = await fetch('${API_BASE}/api/admin/agencies/create-with-hoa', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

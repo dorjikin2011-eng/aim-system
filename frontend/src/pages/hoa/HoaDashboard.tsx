@@ -14,7 +14,7 @@ export default function HoaDashboard() {
 
   const handleApprove = async (assessmentId: string) => {
     try {
-      const response = await fetch('/api/hoa/approve', {
+      const response = await fetch('${API_BASE}/api/hoa/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -36,7 +36,7 @@ export default function HoaDashboard() {
 
   const handleReturn = async (assessmentId: string, remarks: string) => {
     try {
-      const response = await fetch('/api/hoa/return', {
+      const response = await fetch('${API_BASE}/api/hoa/return', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -58,7 +58,7 @@ export default function HoaDashboard() {
 
   const handleValidate = async (assessmentId: string) => {
     try {
-      const response = await fetch('/api/hoa/validate', {
+      const response = await fetch('${API_BASE}/api/hoa/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

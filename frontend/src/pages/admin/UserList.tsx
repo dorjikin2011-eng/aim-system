@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import UserCard from '../../components/UserCard';
 import { UserGroupIcon, HomeIcon, UserPlusIcon } from '@heroicons/react/24/outline';
+import { API_BASE } from '../../config';
 
 interface User {
   id: string;
@@ -25,7 +26,7 @@ export default function UserList() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/admin/users', {
+      const res = await fetch('${API_BASE}/api/admin/users', {
         credentials: 'include' // ✅ Added for consistency
       });
       if (!res.ok) throw new Error('Failed to fetch users');
@@ -47,7 +48,7 @@ export default function UserList() {
     if (!confirm(`Send password reset instructions to ${user.name} (${user.email})?`)) return;
 
     try {
-      const res = await fetch(`/api/admin/users/${user.id}/reset-password`, {
+      const res = await fetch(`${API_BASE}/api/admin/users/${user.id}/reset-password`, {
         method: 'POST',
         credentials: 'include', // ✅ CRITICAL FIX
         headers: {
@@ -68,7 +69,7 @@ export default function UserList() {
     if (!confirm(`Delete user "${user.name}"? This cannot be undone.`)) return;
 
     try {
-      const res = await fetch(`/api/admin/users/${user.id}`, {
+      const res = await fetch(`${API_BASE}/api/admin/users/${user.id}`, {
         method: 'DELETE',
         credentials: 'include' // ✅ Added for consistency
       });

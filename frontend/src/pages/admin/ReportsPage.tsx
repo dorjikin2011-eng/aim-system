@@ -212,9 +212,9 @@ export default function ReportsPage() {
         setLoading(true);
 
         const [summaryRes, scoresRes, pipelineRes] = await Promise.all([
-          fetch('/api/reports/summary'),
-          fetch('/api/reports/agency-scores'),
-          fetch('/api/reports/pipeline'),
+          fetch('${API_BASE}/api/reports/summary'),
+          fetch('${API_BASE}/api/reports/agency-scores'),
+          fetch('${API_BASE}/api/reports/pipeline'),
         ]);
 
         if (!summaryRes.ok) {
@@ -340,7 +340,7 @@ export default function ReportsPage() {
       <div className="flex justify-end">
         <button
           onClick={() =>
-            (window.location.href = '/api/reports/export/excel')
+            (window.location.href = '${API_BASE}/api/reports/export/excel')
           }
           className="px-4 py-2 bg-green-600 text-white rounded flex items-center"
         >

@@ -18,6 +18,8 @@ import {
 } from '@heroicons/react/24/outline';
 import type { FormTemplate } from '../../../types/config';
 
+import { API_BASE } from '../../../config';
+
 interface Agency {
   id: string;
   name: string;
@@ -118,7 +120,7 @@ export default function AgencyAssessmentPage() {
         setLoading(true);
         setError('');
 
-        const agencyResponse = await fetch(`/api/agencies/${agencyId}`, {
+        const agencyResponse = await fetch(`${API_BASE}/api/agencies/${agencyId}`, {
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -138,7 +140,7 @@ export default function AgencyAssessmentPage() {
         setAgency(agencyData.agency || agencyData);
 
         try {
-          const assessmentResponse = await fetch(`/api/assessments/progress/${agencyId}`, {
+          const assessmentResponse = await fetch(`${API_BASE}/api/assessments/progress/${agencyId}`, {
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' }
           });
@@ -188,7 +190,7 @@ export default function AgencyAssessmentPage() {
       
       console.log('📝 SAVE PAYLOAD:', payload);
 
-      const response = await fetch('/api/assessments/save', {
+      const response = await fetch('${API_BASE}/api/assessments/save', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -280,7 +282,7 @@ export default function AgencyAssessmentPage() {
         await saveAssessmentToBackend(currentFormData);
       }
       
-      const response = await fetch(`/api/assessments/finalize/${agencyId}`, {
+      const response = await fetch(`${API_BASE}/api/assessments/finalize/${agencyId}`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -297,7 +299,7 @@ export default function AgencyAssessmentPage() {
         setShowSaveConfirmation(true);
         setTimeout(() => setShowSaveConfirmation(false), 3000);
         
-        const assessmentResponse = await fetch(`/api/assessments/progress/${agencyId}`, {
+        const assessmentResponse = await fetch(`${API_BASE}/api/assessments/progress/${agencyId}`, {
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -330,7 +332,7 @@ export default function AgencyAssessmentPage() {
     setIsUnlocking(true);
 
     try {
-      const unlockUrl = `/api/assessments/unlock/${agencyId}`;
+      const unlockUrl = `${API_BASE}/api/assessments/unlock/${agencyId}`;
       console.log('🔵 Frontend unlock URL:', unlockUrl);
 
       const response = await fetch(unlockUrl, {
@@ -348,7 +350,7 @@ export default function AgencyAssessmentPage() {
         console.log('🔵 Frontend received unlock response:', result);
         alert('✅ Assessment unlocked successfully! You can now edit scores.');
 
-        const assessmentResponse = await fetch(`/api/assessments/progress/${agencyId}`, {
+        const assessmentResponse = await fetch(`${API_BASE}/api/assessments/progress/${agencyId}`, {
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -392,7 +394,7 @@ const handleGenerateReport = async (type: 'agency' | 'summary') => {
       }
       
       // Make the API call
-      const response = await fetch(`/api/assessments/report/${agencyId}`, {
+      const response = await fetch(`${API_BASE}/api/assessments/report/${agencyId}`, {
         method: 'GET',
         credentials: 'include',
         headers: { 

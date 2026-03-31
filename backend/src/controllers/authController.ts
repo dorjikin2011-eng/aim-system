@@ -153,8 +153,7 @@ export const login = async (req: Request, res: Response) => {
     
     res.status(500).json({ 
       error: 'Internal server error during login',
-  details: err.message,
-  stack: err.stack
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
   }
 };

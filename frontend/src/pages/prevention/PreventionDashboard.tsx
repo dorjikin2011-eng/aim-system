@@ -10,6 +10,7 @@ import RiskSnapshot from './components/RiskSnapshot';
 import QuickActions from './components/QuickActions';
 import EmptyStates from './components/EmptyStates';
 import { usePreventionData } from './hooks/usePreventionData';
+import { API_BASE } from '../../config';
 import { 
   ArrowRightOnRectangleIcon, 
   DocumentTextIcon, 
@@ -66,7 +67,7 @@ export default function PreventionDashboard() {
     setSelectedAgencyForReport(agencyId);
     
     try {
-      const response = await fetch(`/api/assessments/report/${agencyId}`, {
+      const response = await fetch(`${API_BASE}/api/assessments/report/${agencyId}`, {
         method: 'GET',
         credentials: 'include',
         headers: {
@@ -116,7 +117,7 @@ export default function PreventionDashboard() {
     setIsGeneratingReport(true);
     
     try {
-      const response = await fetch(`/api/reports/overall?fy=${selectedFY}`, {
+      const response = await fetch(`${API_BASE}/api/reports/overall?fy=${selectedFY}`, {
         method: 'GET',
         credentials: 'include',
         headers: {
@@ -162,7 +163,7 @@ export default function PreventionDashboard() {
   // Handle finalize assessment
   const handleFinalizeAssessment = (agencyId: string) => {
     if (window.confirm('Are you sure you want to finalize this assessment? Once finalized, scores will be locked.')) {
-      fetch(`/api/assessments/finalize/${agencyId}`, {
+      fetch(`${API_BASE}/api/assessments/finalize/${agencyId}`, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -195,7 +196,7 @@ export default function PreventionDashboard() {
     if (!reason) return;
 
     if (window.confirm('Are you sure you want to unlock this assessment? This will allow editing of scores.')) {
-      fetch(`/api/assessments/unlock/${agencyId}`, {
+      fetch(`${API_BASE}/api/assessments/unlock/${agencyId}`, {
         method: 'POST',
         credentials: 'include',
         headers: {

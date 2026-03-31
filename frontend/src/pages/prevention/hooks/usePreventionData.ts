@@ -1,5 +1,6 @@
 // frontend/src/pages/prevention/hooks/usePreventionData.ts
 import { useState, useEffect } from 'react';
+import { API_BASE } from '../../../config';
 
 interface AgencyItem {
   id: string;
@@ -29,7 +30,7 @@ export function usePreventionData(fiscalYear: string) {
     const loadDashboardData = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`/api/prevention/dashboard?fy=${fiscalYear}`);
+        const response = await fetch(`${API_BASE}/api/prevention/dashboard?fy=${fiscalYear}`);
         
         if (!response.ok) {
           throw new Error('Failed to load dashboard data');

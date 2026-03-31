@@ -39,7 +39,7 @@ export default function EvidenceUploadPage() {
   const fetchIndicatorData = async (indicatorNumber: number) => {
     try {
       setLoading(true);
-      const response = await fetch('/api/focal/indicators', {
+      const response = await fetch('${API_BASE}/api/focal/indicators', {
         credentials: 'include'
       });
       
@@ -93,7 +93,7 @@ export default function EvidenceUploadPage() {
     try {
       const evidenceFilePaths = evidenceFiles.map(file => file.path);
 
-      const response = await fetch('/api/focal/save-indicator', {
+      const response = await fetch('${API_BASE}/api/focal/save-indicator', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

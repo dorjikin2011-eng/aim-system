@@ -1,6 +1,7 @@
 // frontend/src/pages/ResetPasswordPage.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { API_BASE } from '../config';
 
 export default function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
@@ -27,9 +28,9 @@ export default function ResetPasswordPage() {
       }
 
       try {
-        // ✅ UPDATED ENDPOINT: Changed from /api/auth/validate-reset-token
+        // ✅ UPDATED ENDPOINT: Changed from ${API_BASE}/api/auth/validate-reset-token
         
-        const response = await fetch(`/api/auth/validate-reset-token/${token}`);
+        const response = await fetch(`${API_BASE}/api/auth/validate-reset-token/${token}`);
         const data = await response.json();
 
         if (response.ok) {
@@ -77,9 +78,9 @@ export default function ResetPasswordPage() {
     setLoading(true);
 
     try {
-      // ✅ UPDATED ENDPOINT: Changed from /api/auth/reset-password
+      // ✅ UPDATED ENDPOINT: Changed from ${API_BASE}/api/auth/reset-password
      
-      const response = await fetch('/api/auth/reset-password', {
+      const response = await fetch('${API_BASE}/api/auth/reset-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

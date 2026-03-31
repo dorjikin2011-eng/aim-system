@@ -50,7 +50,7 @@ export default function FocalDashboard() {
     
     setSubmitting(true);
     try {
-      const response = await fetch('/api/focal/submit', {
+      const response = await fetch('${API_BASE}/api/focal/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

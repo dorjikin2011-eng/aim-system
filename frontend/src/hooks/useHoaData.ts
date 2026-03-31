@@ -42,7 +42,7 @@ export function useHoaData() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/hoa/submissions', {
+      const response = await fetch('${API_BASE}/api/hoa/submissions', {
         credentials: 'include'
       });
       

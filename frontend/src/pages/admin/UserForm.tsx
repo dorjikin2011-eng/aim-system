@@ -1,6 +1,7 @@
 // frontend/src/pages/admin/UserForm.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { API_BASE } from '../../config';
 import { 
   BuildingOfficeIcon,
   ExclamationTriangleIcon,
@@ -68,7 +69,7 @@ export default function UserForm() {
 
   const fetchAgencies = async () => {
     try {
-      const res = await fetch('/api/admin/agencies');
+      const res = await fetch('${API_BASE}/api/admin/agencies');
       const data = await res.json();
       setAgencies(data.agencies || []);
     } catch (err) {
@@ -78,7 +79,7 @@ export default function UserForm() {
 
   const fetchUser = async (userId: string) => {
     try {
-      const res = await fetch(`/api/admin/users/${userId}`);
+      const res = await fetch(`${API_BASE}/api/admin/users/${userId}`);
       const data = await res.json();
       if (data.success && data.user) {
         const userData = data.user;
@@ -103,7 +104,7 @@ export default function UserForm() {
   const fetchOfficerAssignments = async (officerId: string) => {
     setFetchingAssignments(true);
     try {
-      const res = await fetch(`/api/admin/assignments/officers/${officerId}`);
+      const res = await fetch(`${API_BASE}/api/admin/assignments/officers/${officerId}`);
       const data = await res.json();
       if (data.success) {
         setAssignments(data.assignments || []);
@@ -128,7 +129,7 @@ export default function UserForm() {
     }
 
     try {
-      const url = id ? `/api/admin/users/${id}` : '/api/admin/users';
+      const url = id ? `${API_BASE}/api/admin/users/${id}` : '${API_BASE}/api/admin/users';
       const method = id ? 'PUT' : 'POST';
 
       // ✅ Include sendEmail flag in payload

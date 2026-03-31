@@ -75,7 +75,7 @@ export default function CommissionDashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/commission/dashboard', {
+      const response = await fetch('${API_BASE}/api/commission/dashboard', {
         credentials: 'include'
       });
       

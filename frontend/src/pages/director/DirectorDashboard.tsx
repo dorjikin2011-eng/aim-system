@@ -75,7 +75,7 @@ export default function DirectorDashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/director/dashboard', {
+      const response = await fetch('${API_BASE}/api/director/dashboard', {
         credentials: 'include'
       });
       
