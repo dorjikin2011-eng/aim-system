@@ -1,11 +1,17 @@
 // frontend/src/services/api.ts
-const API_BASE = '/api';
+
+// ✅ Vite-native env access (auto-typed by vite/client)
+export const API_BASE = import.meta.env.VITE_API_BASE || 'https://backend-theta-navy-44.vercel.app';
 
 // Helper function for API calls
-async function apiCall(endpoint: string, options: RequestInit = {}) {
+export async function apiCall(endpoint: string, options: RequestInit = {}) {
   try {
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-      credentials: 'include', // Always include cookies for session auth
+    // ✅ Build absolute URL to backend
+    const apiPath = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
+    const url = `${API_BASE}${apiPath}`;
+
+    const response = await fetch(url, {
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
@@ -13,14 +19,21 @@ async function apiCall(endpoint: string, options: RequestInit = {}) {
       ...options,
     });
 
-    // ✅ Handle 401 for /auth/me specially (not logged in, not an error)
+    // ✅ Handle 401 for /auth/me specially
     if (endpoint === '/auth/me' && response.status === 401) {
       return { user: null };
     }
 
-    // For other endpoints, 401 means unauthorized
     if (response.status === 401) {
       throw new Error('unauthorized');
+    }
+
+    // ✅ Safety: Ensure JSON response
+    const contentType = response.headers.get('content-type');
+    if (!contentType?.includes('application/json')) {
+      const text = await response.text();
+      console.error('❌ Non-JSON response:', { url, status: response.status, contentType, preview: text.substring(0, 200) });
+      throw new Error(`Server returned ${response.status} with content-type: ${contentType}. Expected application/json`);
     }
 
     if (!response.ok) {
@@ -30,7 +43,6 @@ async function apiCall(endpoint: string, options: RequestInit = {}) {
 
     return response.json();
   } catch (error) {
-    // Re-throw for the caller to handle
     throw error;
   }
 }
@@ -405,4 +417,4 @@ export const handleApiError = (error: any): string => {
     return 'Network error. Please check your connection.';
   }
   return error.message || 'An unexpected error occurred. Please try again.';
-};
+};// Rebuilt: Thu Apr  9 10:06:33 +06 2026
