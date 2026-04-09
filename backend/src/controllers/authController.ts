@@ -5,6 +5,7 @@ import bcrypt from 'bcrypt';
 import UserService from '../services/userService';
 import { assertUserRole, User } from '../types';
 
+
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
@@ -120,26 +121,33 @@ export const login = async (req: Request, res: Response) => {
       last_login: authUser.last_login
     };
 
-    // Save session before responding
+    // Save session before responding (promisified for Vercel serverless)
+try {
+  await new Promise<void>((resolve, reject) => {
     req.session.save((err) => {
       if (err) {
         console.error('Session save error:', err);
-        return res.status(500).json({ 
-          error: 'Authentication succeeded but session failed' 
-        });
+        reject(err);
+      } else {
+        console.log('✅ Session saved successfully');
+        console.log('✅ Session ID:', req.sessionID);
+        console.log('✅ Session user:', (req.session as any).user);
+        resolve();
       }
-      
-      console.log('✅ Session saved successfully');
-      console.log('✅ Session ID:', req.sessionID);
-      console.log('✅ Session user:', (req.session as any).user);
-      
-      res.json({ 
-        success: true, 
-        user: (req.session as any).user,
-        message: 'Login successful',
-        sessionId: req.sessionID
-      });
     });
+  });
+} catch (saveErr) {
+  return res.status(500).json({ 
+    error: 'Authentication succeeded but session failed to save' 
+  });
+}
+
+res.json({ 
+  success: true, 
+  user: (req.session as any).user,
+  message: 'Login successful',
+  sessionId: req.sessionID
+});
 
   } catch (err: any) {
     console.error('Login error:', err);
@@ -432,7 +440,17 @@ export const getUserProfile = async (req: Request, res: Response) => {
       });
     }
 
-    const authUser = await UserService.getAuthUserById(userId);
+    // Ensure userId is a string (not string[])
+    const userIdString = Array.isArray(userId) ? userId[0] : userId;
+
+    if (!userIdString) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid user ID'
+      });
+    }
+
+    const authUser = await UserService.getAuthUserById(userIdString);
     if (!authUser) {
       return res.status(404).json({
         success: false,
