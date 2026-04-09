@@ -41,31 +41,32 @@ import assignedOfficerRoutes from './routes/assignedOfficerRoutes';
 import { getAgencyById } from './controllers/agencyController';
 import { getSystemConfig } from './controllers/configController';
 
-// DB utilities
-import dbUtils, { getDB, getAsync, runAsync } from './models/db';
-import { Pool } from 'pg';
+// ✅ PostgreSQL DB
+import { pool, query, testConnection, closePool } from './models/db';
 
 const app = express();
 
-/* -------------------- Initialize DB -------------------- */
+/* -------------------- TEST DB CONNECTION -------------------- */
+let dbConnected = false;
 
-(async () => {
-  try {
-    await dbUtils.createTables();
-    console.log('✅ Tables initialized');
-
-    await dbUtils.initializeDatabase();
-    console.log('✅ Default data initialized');
-  } catch (err) {
-    console.error('❌ DB initialization failed:', err);
-    if (process.env.NODE_ENV === 'production') {
-      console.error('🚨 Production database initialization failed. Exiting...');
-      process.exit(1);
+// Test connection without blocking server startup
+testConnection()
+  .then(connected => {
+    dbConnected = connected;
+    if (connected) {
+      console.log('✅ Database is ready for operations');
+    } else {
+      console.warn('⚠️ Database connection failed - some features may not work');
     }
-  }
-})();
+  })
+  .catch(err => {
+    console.error('❌ Database connection error details:', err);
+    console.error('❌ Error message:', err?.message);
+    console.error('❌ Error stack:', err?.stack);
+    dbConnected = false;
+  });
 
-/* -------------------- Security Headers -------------------- */
+/* -------------------- Security -------------------- */
 app.use(
   helmet({
     contentSecurityPolicy: false,
@@ -73,16 +74,23 @@ app.use(
 );
 
 /* -------------------- CORS -------------------- */
-const allowedOrigins = (process.env.FRONTEND_URL || '').split(',');
+const allowedOrigins = (process.env.FRONTEND_URL || '').split(',').filter(origin => origin.trim());
+
+if (allowedOrigins.length === 0 && process.env.NODE_ENV !== 'production') {
+  allowedOrigins.push('http://localhost:5173', 'http://localhost:3000');
+}
 
 app.use(
   cors({
     origin: function (origin, callback) {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) === -1) {
-        return callback(new Error(`CORS blocked: ${origin}`), false);
+      if (allowedOrigins.indexOf(origin) !== -1) {
+        return callback(null, true);
       }
-      return callback(null, true);
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(`CORS blocked: ${origin}`);
+      }
+      return callback(new Error(`CORS blocked: ${origin}`), false);
     },
     credentials: true,
   })
@@ -90,231 +98,152 @@ app.use(
 
 /* -------------------- Parsers -------------------- */
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-/* -------------------- Session -------------------- */
-if (process.env.NODE_ENV === 'production' && process.env.DATABASE_URL) {
-  const pgSession = require('connect-pg-simple')(session);
-  const { Pool } = require('pg');
-  
-  const pgPool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-  });
-  
-  app.use(
-    session({
-      name: 'aims.sid',
-      secret: process.env.SESSION_SECRET || 'dev-secret-aim-system-2026',
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000,
+/* -------------------- SESSION (PostgreSQL ONLY) -------------------- */
+const pgSession = require('connect-pg-simple')(session);
+
+app.use(
+  session({
+    name: 'aims.sid',
+    secret: process.env.SESSION_SECRET || 'dev-secret-aim-system-2026',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      // ✅ Secure required for sameSite: 'none'
+      secure: process.env.NODE_ENV === 'production',
+      // ✅ 'none' allows cross-origin fetch requests to send cookies
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000,
+    },
+    store: new pgSession({
+      pool: pool,
+      tableName: 'session',
+      createTableIfMissing: true,
+      errorLog: (err: Error) => {
+        console.error('Session store error:', err);
       },
-      store: new pgSession({
-        pool: pgPool,
-        tableName: 'session',
-        createTableIfMissing: true
-      })
-    })
-  );
-} else {
-  const SQLiteStore = require('connect-sqlite3')(session);
-  
-  app.use(
-    session({
-      name: 'aims.sid',
-      secret: process.env.SESSION_SECRET || 'dev-secret-aim-system-2026',
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000,
-      },
-      store: new SQLiteStore({
-        db: 'sessions.db',
-        dir: './',
-      }),
-    })
-  );
-}
+    }),
+  })
+);
 
 /* -------------------- Attach session user -------------------- */
 app.use(attachSessionUser);
 
-/* -------------------- Debug Logger -------------------- */
-app.use((req, _res, next) => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('🔍', req.method, req.path);
-  }
-  next();
-});
+/* -------------------- Request Logging (only in development) -------------------- */
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, _res, next) => {
+    console.log(`🔍 ${req.method} ${req.path}`);
+    next();
+  });
+}
 
 /* -------------------- Routes -------------------- */
+
 // Public
 app.use('/api/auth', authRoutes);
 app.use('/api/auth/reset', resetPasswordRoutes);
 app.get('/api/system-config', getSystemConfig);
-app.get('/api/health', (_req, res) => res.json({ status: 'OK' }));
 
-// Test routes
+app.get('/api/health', async (_req, res) => {
+  let dbStatus = false;
+  let dbError = null;
+  try {
+    const result = await pool.query('SELECT NOW() as now');
+    dbStatus = true;
+  } catch (err: any) {
+    dbError = err.message;
+  }
+  res.json({ 
+    status: 'OK', 
+    database: dbStatus,
+    databaseError: dbError,
+    hasDatabaseUrl: !!process.env.DATABASE_URL,
+    nodeEnv: process.env.NODE_ENV
+  });
+});
+
+// Simple test
 app.get('/api/test', (_req, res) => {
   res.json({ message: 'Test route works!', time: new Date().toISOString() });
 });
 
-// fix-template endpoint
-app.post('/api/fix-template', async (req, res) => {
+/* -------------------- FIXED TEMPLATE ENDPOINT -------------------- */
+app.post('/api/fix-template', async (_req, res) => {
   try {
-    const db = getDB();
-    const isPG = db instanceof Pool;
     const bcrypt = require('bcrypt');
     const crypto = require('crypto');
-    
-    // Update admin user
+
     const hashedPassword = await bcrypt.hash('admin123', 10);
-    await runAsync(db, `
-      INSERT INTO users (id, name, email, password_hash, role, is_active)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (email) DO UPDATE SET 
-        password_hash = $4,
-        is_active = true,
-        updated_at = CURRENT_TIMESTAMP
-    `, [
-      crypto.randomUUID(),
-      'System Administrator',
-      'admin@acc.gov',
-      hashedPassword,
-      'system_admin',
-      true
-    ]);
-    
-    // Check and create form template
-    const templateCount = await getAsync<{ count: number }>(db,
-      "SELECT COUNT(*) as count FROM form_templates WHERE id = 'template_aims_assessment_v3'"
-    );
-    
-    console.log('Template count:', templateCount?.count);
-    
-    if (!templateCount || templateCount.count === 0) {
-      const sections = JSON.stringify([
-        {
-          id: 'section_basic',
-          title: 'Agency Information',
-          fields: [
-            { id: 'agency_name', type: 'text', name: 'agency_name', label: 'Agency Name', required: true },
-            { id: 'fiscal_year', type: 'text', name: 'fiscal_year', label: 'Fiscal Year', required: true }
-          ]
-        }
-      ]);
-      
-      await runAsync(db, `
-        INSERT INTO form_templates (id, name, description, template_type, indicator_ids, sections, version, is_active, created_by, updated_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      `, [
-        'template_aims_assessment_v3',
-        'AIMS Assessment Form (V3)',
-        'Standard AIMS assessment form',
-        'assessment',
-        JSON.stringify(['ind_iccs_v3', 'ind_training_v3', 'ind_ad_v3', 'ind_coc_v3', 'ind_cases_v3']),
-        sections,
-        '3.0.0',
+
+    // Upsert admin user
+    await query(
+      `INSERT INTO users (id, name, email, password_hash, role, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (email) DO UPDATE SET 
+         password_hash = EXCLUDED.password_hash,
+         is_active = true,
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        crypto.randomUUID(),
+        'System Administrator',
+        'admin@acc.gov',
+        hashedPassword,
+        'system_admin',
         true,
-        'system',
-        'system'
-      ]);
-      console.log('✅ Form template created');
+      ]
+    );
+
+    // Check template
+    // FIXED: query() returns rows array directly, not { rows }
+    const templateRows = await query(
+      `SELECT COUNT(*) FROM form_templates WHERE id = 'template_aims_assessment_v3'`
+    );
+
+    const count = Number(templateRows[0]?.count || 0);
+
+    if (count === 0) {
+      await query(
+        `INSERT INTO form_templates 
+        (id, name, description, template_type, indicator_ids, sections, version, is_active)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          'template_aims_assessment_v3',
+          'AIMS Assessment Form (V3)',
+          'Standard AIMS assessment form',
+          'assessment',
+          JSON.stringify([
+            'ind_iccs_v3',
+            'ind_training_v3',
+            'ind_ad_v3',
+            'ind_coc_v3',
+            'ind_cases_v3',
+          ]),
+          JSON.stringify([]),
+          '3.0.0',
+          true,
+        ]
+      );
     }
-    
-    // Get the user
-    const user = await getAsync<any>(db, 
-      "SELECT email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
-    );
-    
-    // Verify template was created
-    const finalTemplateCount = await getAsync<{ count: number }>(db,
-      "SELECT COUNT(*) as count FROM form_templates"
-    );
-    
-    res.json({ 
-      success: true, 
-      user,
-      templateCount: finalTemplateCount?.count || 0,
-      message: `Admin ready! Template count: ${finalTemplateCount?.count || 0}`
-    });
+
+    res.json({ success: true });
   } catch (err) {
-    console.error('Error:', err);
+    console.error('Fix template error:', err);
     res.status(500).json({ error: String(err) });
   }
 });
 
-//test endpoint
-app.get('/api/debug-auth-logic', async (req, res) => {
-  try {
-    const db = getDB();
-    const user = await getAsync<any>(db, 
-      "SELECT id, email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
-    );
-    
-    // Simulate what the login controller does
-    const isActiveFromLogin = user?.is_active === true || user?.is_active === 1;
-    const wouldLogin = isActiveFromLogin;
-    
-    res.json({ 
-      user_from_db: user,
-      is_active_value: user?.is_active,
-      is_active_type: typeof user?.is_active,
-      would_login: wouldLogin,
-      note: wouldLogin ? 'Login should work' : 'Login would fail'
-    });
-  } catch (err) {
-    res.json({ error: String(err) });
-  }
-});
-
-// Debug user endpoint
-app.get('/api/debug-user', async (req, res) => {
-  try {
-    const db = getDB();
-    const user = await getAsync<any>(db, 
-      "SELECT email, role, is_active FROM users WHERE email = 'admin@acc.gov'"
-    );
-    res.json(user || { error: 'User not found' });
-  } catch (err) {
-    res.status(500).json({ error: String(err) });
-  }
-});
-
-app.get('/api/debug-login-check', async (req, res) => {
-  try {
-    const db = getDB();
-    const user = await getAsync<any>(db, 
-      "SELECT id, email, role, is_active, status FROM users WHERE email = 'admin@acc.gov'"
-    );
-    res.json({ 
-      user,
-      is_active_value: user?.is_active,
-      status_value: user?.status,
-      login_condition: user?.is_active === true || user?.status === 'active'
-    });
-  } catch (err) {
-    res.json({ error: String(err) });
-  }
-});
-
-// Auth middleware
-const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+/* -------------------- Auth Middleware -------------------- */
+const authMiddleware = (req: any, res: any, next: any) => {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'Authentication required' });
   }
   next();
 };
 
-// Protected routes
+/* -------------------- Protected Routes -------------------- */
 app.use('/api/admin', authMiddleware, adminRoutes);
 app.use('/api/admin/agencies', authMiddleware, adminAgencyRoutes);
 app.use('/api/admin/users', authMiddleware, adminUserRoutes);
@@ -339,42 +268,90 @@ app.use('/api/maturity', authMiddleware, maturityRoutes);
 app.use('/api/agency/assigned-officer', assignedOfficerRoutes);
 app.use('/api/agency', authMiddleware, agencyRoutes);
 
-/* -------------------- Test Route -------------------- */
-app.post('/api/auth/reset/test-forgot-password', (req, res) => {
-  res.json({
-    success: true,
-    message: 'Test route working. Email would be sent to: ' + req.body.email,
-  });
-});
-
-/* -------------------- Simple Route -------------------- */
+/* -------------------- Root -------------------- */
 app.get('/', (_req, res) => {
   res.json({
     success: true,
     message: 'AIMS Backend API is running 🚀',
+    environment: process.env.NODE_ENV || 'development',
+    database: dbConnected ? 'connected' : 'disconnected',
   });
 });
 
 /* -------------------- 404 Handler -------------------- */
 app.use('*', (req, res) => {
-  res.status(404).json({ success: false, error: `Route ${req.originalUrl} not found` });
+  res.status(404).json({ 
+    success: false, 
+    error: `Route ${req.originalUrl} not found` 
+  });
 });
 
-/* -------------------- Error Handling -------------------- */
+/* -------------------- Global Error Handler -------------------- */
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({
-    success: false,
-    error: 'Internal server error',
+  
+  const message = process.env.NODE_ENV === 'production' 
+    ? 'Internal server error' 
+    : err.message;
+  
+  res.status(500).json({ 
+    success: false, 
+    error: message 
   });
+});
+
+/* -------------------- Graceful Shutdown -------------------- */
+const gracefulShutdown = async (signal: string) => {
+  console.log(`\n🛑 Received ${signal}, starting graceful shutdown...`);
+  
+  try {
+    await closePool();
+    console.log('✅ Database pool closed');
+  } catch (err) {
+    console.error('❌ Error closing database pool:', err);
+  }
+  
+  console.log('👋 Graceful shutdown complete');
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('unhandledRejection');
 });
 
 /* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 Database mode: ${process.env.NODE_ENV === 'production' ? 'PostgreSQL' : 'SQLite'}`);
-});
+// Only listen when NOT in Vercel serverless environment
+// Vercel sets the VERCEL environment variable to 1
+const isVercel = process.env.VERCEL === '1';
 
+if (!isVercel) {
+  const server = app.listen(PORT, () => {
+    console.log(`\n🚀 Server running on port ${PORT}`);
+    console.log(`📊 Database: PostgreSQL (Supabase)`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`\n✨ AIMS Backend API is ready!`);
+  });
+  
+  // Handle graceful shutdown for local development
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received, closing server...');
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  });
+}
+
+// Export the Express app for Vercel serverless functions
 export default app;
