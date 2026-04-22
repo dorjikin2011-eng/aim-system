@@ -1,4 +1,4 @@
-// backend/src/controllers/assessmentController.ts - COMPLETE FIXED VERSION WITH PROPER TYPES
+// backend/src/controllers/assessmentController.ts - COMPLETE FIXED VERSION
 import { Request, Response } from 'express';
 import { getDB, getAsync, allAsync, runAsync } from '../models/db';
 import { FormGenerator } from '../utils/FormGenerator';
@@ -6,7 +6,9 @@ import { IndicatorConfig } from '../models/IndicatorConfig';
 import { FormTemplate } from '../models/FormTemplate';
 import crypto from 'crypto';
 
-// Database row types
+// ============================================
+// Database Row Types
+// ============================================
 interface AssessmentRow {
   id: string;
   agency_id: string;
@@ -50,7 +52,9 @@ interface DynamicAssessmentResponseRow {
   updated_at: string;
 }
 
-// Types for request body
+// ============================================
+// Request Body Types
+// ============================================
 interface SaveAssessmentBody {
   agency_id: string;
   indicatorId: string;
@@ -72,12 +76,13 @@ interface SubmitAssessmentBody {
   submitted_at: string;
 }
 
-// Generate simple UUID-like string
+// ============================================
+// Utility Functions
+// ============================================
 function generateId(): string {
   return crypto.randomUUID ? crypto.randomUUID() : [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
 }
 
-// Helper function for audit logging
 async function logAssessmentAction(
   action: string,
   agencyId: string,
@@ -88,8 +93,7 @@ async function logAssessmentAction(
     const db = getDB();
     await runAsync(
       db,
-      `INSERT INTO audit_logs (id, action, user_id, agency_id, details, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO audit_logs (id, action, user_id, agency_id, details, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         generateId(),
         action,
@@ -104,40 +108,35 @@ async function logAssessmentAction(
   }
 }
 
-// Helper function to find template for an indicator
 async function findTemplateForIndicator(indicatorId: string): Promise<string | null> {
   try {
     const db = getDB();
-    
-    // First, try to find templates by indicatorIds array
-    const templates = await allAsync<any[]>(
+    const templates = await allAsync<any>(
       db,
       `SELECT id FROM form_templates
-      WHERE is_active = 1
-      AND template_type IN ('assessment', 'custom')
-      ORDER BY created_at DESC`,
+       WHERE is_active = true
+       AND template_type IN ('assessment', 'custom')
+       ORDER BY created_at DESC`,
       []
     );
 
-    // Check each template for the indicator
     for (const template of templates) {
       const templateData = await FormTemplate.getById(template.id);
-      if (templateData && templateData.indicatorIds.includes(indicatorId)) {
+      if (templateData && templateData.indicatorIds?.includes(indicatorId)) {
         return template.id;
       }
     }
 
-    // If no template found, try to find a default template for the indicator's category
     const indicator = await IndicatorConfig.getById(indicatorId);
     if (indicator) {
-      const defaultTemplates = await allAsync<any[]>(
+      const defaultTemplates = await allAsync<any>(
         db,
         `SELECT id FROM form_templates
-        WHERE is_active = 1
-        AND template_type = 'assessment'
-        AND (ui_config LIKE ? OR metadata LIKE ?)
-        ORDER BY created_at DESC
-        LIMIT 1`,
+         WHERE is_active = true
+         AND template_type = 'assessment'
+         AND (ui_config LIKE $1 OR metadata LIKE $2)
+         ORDER BY created_at DESC
+         LIMIT 1`,
         [`%${indicator.category}%`, `%${indicator.category}%`]
       );
 
@@ -153,10 +152,9 @@ async function findTemplateForIndicator(indicatorId: string): Promise<string | n
   }
 }
 
-// Helper function to get all indicators
 async function getAllIndicators(db: any) {
   try {
-    const indicators = await allAsync<any[]>(
+    const indicators = await allAsync(
       db,
       `SELECT id, code, name FROM indicators LIMIT 10`,
       []
@@ -167,14 +165,65 @@ async function getAllIndicators(db: any) {
   }
 }
 
-// Helper function to calculate AIMS score from form data
+// ============================================
+// Helper: Calculate score for a SINGLE indicator only
+// ============================================
+function calculateIndicatorScoreOnly(indicatorId: string, formData: any): number {
+  const data = formData || {};
+  
+  switch(indicatorId) {
+    case 'ind_iccs_v3': {
+      const levelPoints: Record<number, number> = {0: 0, 1: 4, 2: 6, 3: 8};
+      return (levelPoints[Number(data.complaint_level)||0] || 0) +
+             (levelPoints[Number(data.coi_level)||0] || 0) +
+             (levelPoints[Number(data.gift_level)||0] || 0) +
+             (levelPoints[Number(data.proactive_level)||0] || 0);
+    }
+    case 'ind_training_v3': {
+      const total = Number(data.total_employees) || 0;
+      const completed = Number(data.completed_employees) || 0;
+      if (total === 0) return 0;
+      const pct = (completed / total) * 100;
+      if (pct >= 85) return 24;
+      if (pct >= 70) return 18;
+      if (pct >= 50) return 10;
+      return 0;
+    }
+    case 'ind_ad_v3': {
+      const total = Number(data.total_covered_officials) || 0;
+      const submitted = Number(data.officials_submitted_on_time) || 0;
+      if (total === 0) return 0;
+      const pct = (submitted / total) * 100;
+      if (pct >= 100) return 14;
+      if (pct >= 95) return 10;
+      if (pct >= 90) return 5;
+      return 0;
+    }
+    case 'ind_coc_v3': {
+      const cocPoints: Record<number, number> = {0: 0, 1: 4, 2: 7, 3: 10};
+      return cocPoints[Number(data.coc_level)||0] || 0;
+    }
+    case 'ind_cases_v3': {
+      const severity = (Number(data.conviction_cases)||0)*3 + 
+                       (Number(data.prosecution_cases)||0)*2 + 
+                       (Number(data.admin_action_cases)||0)*1;
+      if (severity === 0) return 20;
+      if (severity <= 2) return 12;
+      if (severity <= 4) return 6;
+      return 0;
+    }
+    default:
+      return 0;
+  }
+}
+
+// ============================================
+// Helper: Calculate TOTAL AIMS score (all 5 indicators combined)
+// ============================================
 function calculateAIMSScore(formData: any): number {
   console.log('🧮 Calculating AIMS score from form data');
-  
-  // Extract the nested indicator data if it exists
   let data = formData;
   
-  // Check if data is nested under an indicator ID
   for (const key in formData) {
     if (typeof formData[key] === 'object' && formData[key] !== null) {
       if (formData[key].complaint_level !== undefined) {
@@ -184,68 +233,51 @@ function calculateAIMSScore(formData: any): number {
       }
     }
   }
-  
-  // If we couldn't find nested data, try using formData directly
-  if (data === formData) {
-    console.log('📦 Using top-level form data');
-  }
-  
-  // ICCS Score (32 points)
+
   const complaintLevel = Number(data.complaint_level) || 0;
   const coiLevel = Number(data.coi_level) || 0;
   const giftLevel = Number(data.gift_level) || 0;
-  
-  const iccsScore = (complaintLevel * 4) + (coiLevel * 4) + (giftLevel * 4);
-  console.log('📊 ICCS Score:', { complaintLevel, coiLevel, giftLevel, iccsScore });
-  
-  // Training Score (24 points)
+  const proactiveLevel = Number(data.proactive_level) || 0;
+  const levelPoints: Record<number, number> = {0: 0, 1: 4, 2: 6, 3: 8};
+  const iccsScore = (levelPoints[complaintLevel] || 0) +
+                    (levelPoints[coiLevel] || 0) +
+                    (levelPoints[giftLevel] || 0) +
+                    (levelPoints[proactiveLevel] || 0);
+
   const totalEmployees = Number(data.total_employees) || 0;
   const completedEmployees = Number(data.completed_employees) || 0;
   let trainingScore = 0;
-  
   if (totalEmployees > 0) {
     const trainingPercent = (completedEmployees / totalEmployees) * 100;
     if (trainingPercent >= 85) trainingScore = 24;
     else if (trainingPercent >= 70) trainingScore = 18;
     else if (trainingPercent >= 50) trainingScore = 10;
-    console.log('📊 Training Score:', { totalEmployees, completedEmployees, trainingPercent, trainingScore });
   }
-  
-  // AD Score (14 points)
+
   const totalOfficials = Number(data.total_covered_officials) || 0;
   const submittedOfficials = Number(data.officials_submitted_on_time) || 0;
   let adScore = 0;
-  
   if (totalOfficials > 0) {
     const adPercent = (submittedOfficials / totalOfficials) * 100;
     if (adPercent >= 100) adScore = 14;
     else if (adPercent >= 95) adScore = 10;
     else if (adPercent >= 90) adScore = 5;
-    console.log('📊 AD Score:', { totalOfficials, submittedOfficials, adPercent, adScore });
   }
-  
-  // CoC Score (10 points)
+
   const cocLevel = Number(data.coc_level) || 0;
   const cocPoints: Record<number, number> = {0: 0, 1: 4, 2: 7, 3: 10};
   const cocScore = cocPoints[cocLevel] || 0;
-  console.log('📊 CoC Score:', { cocLevel, cocScore });
-  
-  // Cases Score (20 points)
+
   const convictions = Number(data.conviction_cases) || 0;
   const prosecutions = Number(data.prosecution_cases) || 0;
   const adminActions = Number(data.admin_action_cases) || 0;
   const severityScore = (convictions * 3) + (prosecutions * 2) + (adminActions * 1);
-  
   let casesScore = 0;
   if (severityScore === 0) casesScore = 20;
   else if (severityScore <= 2) casesScore = 12;
   else if (severityScore <= 4) casesScore = 6;
-  
-  console.log('📊 Cases Score:', { convictions, prosecutions, adminActions, severityScore, casesScore });
-  
+
   const totalScore = iccsScore + trainingScore + adScore + cocScore + casesScore;
-  console.log('📊 TOTAL AIMS SCORE:', totalScore);
-  
   return totalScore;
 }
 
@@ -258,19 +290,16 @@ export async function getAssessmentProgress(req: Request, res: Response) {
     const { agencyId } = req.params;
     console.log('Agency ID:', agencyId);
     const db = getDB();
-
-    // Get assessment for current fiscal year
     const currentYear = new Date().getFullYear();
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
 
     const assessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+      `SELECT *, indicator_scores FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
       [agencyId, fiscalYear]
     );
 
     if (!assessment) {
-      // Return default assessment if none exists
       return res.json({
         success: true,
         assessment: {
@@ -285,22 +314,36 @@ export async function getAssessmentProgress(req: Request, res: Response) {
       });
     }
 
-    // Get all dynamic assessment responses for this assessment
-    const indicatorResponses = await allAsync<DynamicAssessmentResponseRow[]>(
+    const indicatorResponses = await allAsync<DynamicAssessmentResponseRow>(
       db,
-      `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ?`,
+      `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = $1`,
       [assessment.id]
     );
 
-    // Convert to indicator_scores object
     const indicator_scores: Record<string, number> = {};
     const response_data: Record<string, any> = {};
 
+    // First, try to get scores from assessment.indicator_scores column
+    if (assessment.indicator_scores) {
+      try {
+        let savedScores = assessment.indicator_scores;
+        if (typeof savedScores === 'string') {
+          savedScores = JSON.parse(savedScores);
+        }
+        Object.assign(indicator_scores, savedScores);
+        console.log('📊 Loaded indicator_scores from assessment column:', indicator_scores);
+      } catch (e) {
+        console.error('Error parsing indicator_scores:', e);
+      }
+    }
+
+    // Also load response data from dynamic_responses
     if (indicatorResponses && Array.isArray(indicatorResponses)) {
       indicatorResponses.forEach(response => {
         if (response.indicator_id) {
-          indicator_scores[response.indicator_id] = response.final_score;
-          // Parse response data if exists
+          if (!indicator_scores[response.indicator_id]) {
+            indicator_scores[response.indicator_id] = response.final_score;
+          }
           if (response.response_data) {
             try {
               response_data[response.indicator_id] = JSON.parse(response.response_data);
@@ -350,7 +393,7 @@ export async function getAssessmentProgress(req: Request, res: Response) {
 export async function saveIndicatorAssessment(req: Request, res: Response) {
   try {
     const { agency_id, indicatorId, score, responseData, last_updated, templateId } = req.body as SaveAssessmentBody;
-
+    
     if (!agency_id || !indicatorId) {
       return res.status(400).json({
         success: false,
@@ -360,26 +403,24 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
 
     console.log('🔍 Received save request:', { agency_id, indicatorId, score });
 
-    // Map frontend indicator IDs to actual database IDs
     const indicatorIdMap: Record<string, string> = {
-      'aims-assessment': 'ind_1770114038668_i6jrig8sz',
-      'iccs': 'ind_1770114038668_i6jrig8sz',
-      'ind_iccs': 'ind_1770114038668_i6jrig8sz',
-      'training': 'ind_1770114038672_noe0zgtjx',
-      'ind_training': 'ind_1770114038672_noe0zgtjx',
-      'capacity': 'ind_1770114038672_noe0zgtjx',
-      'ad': 'ind_1770114038673_zuella44q',
-      'ind_ad': 'ind_1770114038673_zuella44q',
-      'asset_declaration': 'ind_1770114038673_zuella44q',
-      'cases': 'ind_1770114038674_x4z2r2vjh',
-      'ind_cases': 'ind_1770114038674_x4z2r2vjh',
-      'corruption_cases': 'ind_1770114038674_x4z2r2vjh',
-      'coc': 'ind_coc',
-      'ind_coc': 'ind_coc',
-      'code_of_conduct': 'ind_coc',
+      'aims-assessment': 'ind_iccs_v3',
+      'iccs': 'ind_iccs_v3',
+      'ind_iccs': 'ind_iccs_v3',
+      'training': 'ind_training_v3',
+      'ind_training': 'ind_training_v3',
+      'capacity': 'ind_training_v3',
+      'ad': 'ind_ad_v3',
+      'ind_ad': 'ind_ad_v3',
+      'asset_declaration': 'ind_ad_v3',
+      'cases': 'ind_cases_v3',
+      'ind_cases': 'ind_cases_v3',
+      'corruption_cases': 'ind_cases_v3',
+      'coc': 'ind_coc_v3',
+      'ind_coc': 'ind_coc_v3',
+      'code_of_conduct': 'ind_coc_v3',
     };
 
-    // Use the mapped ID or fall back to the original
     const dbIndicatorId = indicatorIdMap[indicatorId] || indicatorId;
     console.log('🔍 Mapped indicator ID:', { original: indicatorId, mapped: dbIndicatorId });
 
@@ -388,10 +429,9 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
     const userId = (req as any).user?.id || 'system';
 
-    // Check if the mapped indicator exists
     const indicatorExists = await getAsync<any>(
       db,
-      `SELECT id FROM indicators WHERE id = ?`,
+      `SELECT id FROM indicators WHERE id = $1`,
       [dbIndicatorId]
     );
 
@@ -404,32 +444,24 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
       });
     }
 
-    // Try to get indicator configuration
     let indicator: any = null;
     try {
       indicator = await IndicatorConfig.getById(dbIndicatorId);
     } catch (error) {
       console.warn(`Indicator ${dbIndicatorId} not found in IndicatorConfig, using defaults`);
     }
-
-    // Calculate score using FormGenerator if responseData is provided
-    let calculatedScore = score || 0;
+    
+    let calculatedScore = score !== undefined ? score : calculateIndicatorScoreOnly(dbIndicatorId, responseData);
     let scoringBreakdown: any[] = [];
-
-    // Calculate AIMS score from the form data
-    const aimsTotalScore = calculateAIMSScore(responseData);
-    console.log('🎯 Calculated AIMS total score:', aimsTotalScore);
 
     if (responseData && Object.keys(responseData).length > 0) {
       try {
-        // Find or use provided template
         let effectiveTemplateId: string | null | undefined = templateId;
         if (!effectiveTemplateId) {
           effectiveTemplateId = await findTemplateForIndicator(dbIndicatorId);
         }
 
         if (effectiveTemplateId) {
-          // Use FormGenerator for dynamic scoring
           const scoreResult = await FormGenerator.calculateScore(responseData, effectiveTemplateId);
           if (indicator?.code) {
             const indicatorScore = scoreResult.breakdown.find(
@@ -443,33 +475,29 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
         }
       } catch (scoringError) {
         console.error('Error calculating dynamic score:', scoringError);
-        // Fall back to manual score if dynamic scoring fails
       }
     }
 
-    // Use the calculated AIMS score as the final score for this indicator
-    const finalScore = aimsTotalScore > 0 ? aimsTotalScore : calculatedScore;
+    const finalScore = calculatedScore;
     console.log('✅ Using final score:', finalScore);
 
-    // Check if assessment exists
     let assessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+      `SELECT * FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
       [agency_id, fiscalYear]
     );
 
     let assessmentId: string;
-    let overallStatus: string = 'IN_PROGRESS';
+    let overallStatus: string = 'IN_PROGRESS'; 
 
     if (!assessment) {
-      // Create new assessment
       assessmentId = generateId();
       await runAsync(
         db,
         `INSERT INTO assessments (
           id, agency_id, fiscal_year, status, overall_score,
           assigned_officer_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           assessmentId,
           agency_id,
@@ -486,7 +514,6 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
       assessmentId = assessment.id;
       overallStatus = assessment.status === 'NOT_STARTED' ? 'IN_PROGRESS' : assessment.status;
 
-      // Check if assessment is finalized and locked
       if (assessment.status === 'FINALIZED' && !assessment.unlocked_at) {
         return res.status(400).json({
           success: false,
@@ -495,40 +522,37 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
         });
       }
 
-      // Update assessment timestamp
       await runAsync(
         db,
-        `UPDATE assessments SET updated_at = ? WHERE id = ?`,
+        `UPDATE assessments SET updated_at = $1 WHERE id = $2`,
         [new Date().toISOString(), assessmentId]
       );
     }
 
-    // Check if dynamic assessment response exists
     const existingResponse = await getAsync<DynamicAssessmentResponseRow>(
       db,
-      `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ? AND indicator_id = ?`,
+      `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = $1 AND indicator_id = $2`,
       [assessmentId, dbIndicatorId]
     );
 
     if (!existingResponse) {
-      // Create new dynamic assessment response with calculated score
       await runAsync(
         db,
         `INSERT INTO dynamic_assessment_responses (
           id, assessment_id, indicator_id, response_data,
           calculated_score, manual_score, final_score,
           evidence_files, comments, created_at, updated_at, is_locked
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           generateId(),
           assessmentId,
           dbIndicatorId,
           JSON.stringify(responseData || {}),
           calculatedScore,
-          score || null,
+          score !== undefined ? score : null,
           finalScore,
           JSON.stringify([]),
-          JSON.stringify({...scoringBreakdown, aimsTotal: aimsTotalScore}),
+          JSON.stringify({...scoringBreakdown}),
           new Date().toISOString(),
           new Date().toISOString(),
           0
@@ -536,7 +560,6 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
       );
       console.log('✅ Created new response for indicator:', dbIndicatorId, 'with score:', finalScore);
     } else {
-      // Check if response is locked
       if (existingResponse.is_locked && !existingResponse.unlocked_at) {
         return res.status(400).json({
           success: false,
@@ -545,24 +568,23 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
         });
       }
 
-      // Update existing dynamic assessment response
       await runAsync(
         db,
         `UPDATE dynamic_assessment_responses SET
-          response_data = ?,
-          calculated_score = ?,
-          manual_score = ?,
-          final_score = ?,
-          comments = ?,
-          updated_at = ?,
-          is_locked = ?
-        WHERE assessment_id = ? AND indicator_id = ?`,
+          response_data = $1,
+          calculated_score = $2,
+          manual_score = $3,
+          final_score = $4,
+          comments = $5,
+          updated_at = $6,
+          is_locked = $7
+        WHERE assessment_id = $8 AND indicator_id = $9`,
         [
           JSON.stringify(responseData || {}),
           calculatedScore,
-          existingResponse.manual_score || score || null,
+          existingResponse.manual_score || (score !== undefined ? score : null),
           finalScore,
-          JSON.stringify({...scoringBreakdown, aimsTotal: aimsTotalScore}),
+          JSON.stringify({...scoringBreakdown}),
           new Date().toISOString(),
           existingResponse.is_locked || 0,
           assessmentId,
@@ -572,27 +594,26 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
       console.log('✅ Updated response for indicator:', dbIndicatorId, 'with score:', finalScore);
     }
 
-    // Calculate overall score from all responses
-    const allResponses = await allAsync<any[]>(
+    // Recalculate overall score from all indicator responses
+    const allResponses = await allAsync<any>(
       db,
-      `SELECT final_score FROM dynamic_assessment_responses WHERE assessment_id = ?`,
+      `SELECT final_score FROM dynamic_assessment_responses WHERE assessment_id = $1`,
       [assessmentId]
     );
 
     const totalScore = allResponses.reduce((sum, res) => sum + (res.final_score || 0), 0);
     const responseCount = allResponses.length;
-    const overallScore = responseCount > 0 ? totalScore / responseCount : 0;
+    const overallScore = totalScore; // SUM not average
 
     console.log('📊 Overall score calculation:', { totalScore, responseCount, overallScore });
 
-    // Update assessment overall score and status
     await runAsync(
       db,
       `UPDATE assessments SET
-        overall_score = ?,
-        status = ?,
-        updated_at = ?
-      WHERE id = ?`,
+        overall_score = $1,
+        status = $2,
+        updated_at = $3
+      WHERE id = $4`,
       [
         overallScore,
         overallStatus,
@@ -601,14 +622,12 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
       ]
     );
 
-    // Get updated assessment
     const updatedAssessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE id = ?`,
+      `SELECT * FROM assessments WHERE id = $1`,
       [assessmentId]
     );
 
-    // Get indicator details for response (if available)
     const indicatorDetails = indicator ? {
       id: indicator.id,
       name: indicator.name,
@@ -625,18 +644,14 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
       indicator: indicatorDetails,
       scoring: {
         calculatedScore,
-        manualScore: score || null,
+        manualScore: score !== undefined ? score : null,
         finalScore,
-        aimsTotal: aimsTotalScore,
         breakdown: scoringBreakdown
       },
       message: 'Assessment saved successfully'
     });
   } catch (err) {
     console.error('❌ Save indicator assessment error:', err);
-    console.error('❌ Error stack:', err instanceof Error ? err.stack : 'No stack trace');
-    
-    // Check for foreign key constraint error
     if (err instanceof Error && err.message.includes('FOREIGN KEY')) {
       return res.status(400).json({
         success: false,
@@ -644,7 +659,7 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
         details: err.message
       });
     }
-    
+
     res.status(500).json({
       success: false,
       error: 'Failed to save assessment',
@@ -654,12 +669,13 @@ export async function saveIndicatorAssessment(req: Request, res: Response) {
 }
 
 // ============================================
-// Save all assessments at once
+// ⭐ Save all assessments at once - WITH indicator_scores column
 // ============================================
 export async function saveAllAssessments(req: Request, res: Response) {
   try {
+    console.log('\n=== saveAllAssessments CALLED ===');
     const { agency_id, indicator_scores, response_data, status } = req.body as SaveAllAssessmentBody;
-
+    
     if (!agency_id || !indicator_scores) {
       return res.status(400).json({
         success: false,
@@ -667,57 +683,66 @@ export async function saveAllAssessments(req: Request, res: Response) {
       });
     }
 
-    console.log('saveAllAssessments called with:', { agency_id, indicatorCount: Object.keys(indicator_scores).length, status });
+    console.log('saveAllAssessments called with:', { 
+      agency_id, 
+      indicator_scores,
+      status 
+    });
 
     const db = getDB();
     const currentYear = new Date().getFullYear();
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
     const userId = (req as any).user?.id || 'system';
 
-    // Map frontend indicator IDs to actual database IDs
     const indicatorIdMap: Record<string, string> = {
-      'aims-assessment': 'ind_1770114038668_i6jrig8sz',
-      'iccs': 'ind_1770114038668_i6jrig8sz',
-      'training': 'ind_1770114038672_noe0zgtjx',
-      'ad': 'ind_1770114038673_zuella44q',
-      'cases': 'ind_1770114038674_x4z2r2vjh',
-      'coc': 'ind_coc',
+      'ind_iccs_v3': 'ind_iccs_v3',
+      'ind_training_v3': 'ind_training_v3',
+      'ind_ad_v3': 'ind_ad_v3',
+      'ind_coc_v3': 'ind_coc_v3',
+      'ind_cases_v3': 'ind_cases_v3',
     };
 
-    // Check if assessment exists
+    // Get or create assessment record
     let assessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+      `SELECT * FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
       [agency_id, fiscalYear]
     );
 
     let assessmentId: string;
     let overallStatus = status || 'IN_PROGRESS';
 
+    // Calculate total score from indicator_scores
+    let totalScore = 0;
+    for (const [indicatorId, score] of Object.entries(indicator_scores)) {
+      totalScore += typeof score === 'number' ? score : Number(score);
+    }
+    const overallScore = totalScore; // SUM not average
+
     if (!assessment) {
-      // Create new assessment
       assessmentId = generateId();
       await runAsync(
         db,
         `INSERT INTO assessments (
-          id, agency_id, fiscal_year, status, overall_score,
+          id, agency_id, fiscal_year, status, overall_score, indicator_scores,
           assigned_officer_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           assessmentId,
           agency_id,
           fiscalYear,
           overallStatus,
-          null,
+          overallScore,
+          JSON.stringify(indicator_scores),
           userId,
           new Date().toISOString(),
           new Date().toISOString()
         ]
       );
-      console.log('Created new assessment:', assessmentId);
+      console.log('✅ Created new assessment with indicator_scores:', assessmentId);
     } else {
       assessmentId = assessment.id;
-      // Check if assessment is finalized and locked
+      
       if (assessment.status === 'FINALIZED' && !assessment.unlocked_at) {
         return res.status(400).json({
           success: false,
@@ -725,141 +750,101 @@ export async function saveAllAssessments(req: Request, res: Response) {
           assessment
         });
       }
-      // Update assessment status
+      
       await runAsync(
         db,
         `UPDATE assessments SET
-          status = ?,
-          updated_at = ?
-        WHERE id = ?`,
+          status = $1,
+          overall_score = $2,
+          indicator_scores = $3,
+          updated_at = $4
+        WHERE id = $5`,
         [
           overallStatus,
+          overallScore,
+          JSON.stringify(indicator_scores),
           new Date().toISOString(),
           assessmentId
         ]
       );
-      console.log('Updated existing assessment:', assessmentId);
+      console.log('✅ Updated assessment with indicator_scores:', assessmentId);
     }
 
-    // Save/update each indicator in dynamic_assessment_responses
-    let totalScore: number = 0;
-    let indicatorCount: number = 0;
-    const scoringResults: Record<string, any> = {};
-
+    // Also save to dynamic_assessment_responses for backward compatibility
     for (const [indicatorId, manualScore] of Object.entries(indicator_scores)) {
       const dbIndicatorId = indicatorIdMap[indicatorId] || indicatorId;
-      const responseData = response_data?.[indicatorId] || {};
-      
-      // Calculate AIMS score if this is the main assessment
-      let finalScore = manualScore;
-      if (indicatorId === 'aims-assessment' || indicatorId === 'iccs') {
-        finalScore = calculateAIMSScore(responseData);
-        console.log(`🎯 Calculated AIMS score for ${indicatorId}:`, finalScore);
-      }
-      
-      totalScore += finalScore;
-      indicatorCount++;
+      const responseDataItem = response_data?.[indicatorId] || {};
+      const finalScore = typeof manualScore === 'number' ? manualScore : 0;
 
-      // Check if dynamic assessment response exists
       const existingResponse = await getAsync<DynamicAssessmentResponseRow>(
         db,
-        `SELECT id, is_locked, unlocked_at FROM dynamic_assessment_responses WHERE assessment_id = ? AND indicator_id = ?`,
+        `SELECT id, is_locked, unlocked_at FROM dynamic_assessment_responses 
+         WHERE assessment_id = $1 AND indicator_id = $2`,
         [assessmentId, dbIndicatorId]
       );
 
       if (!existingResponse) {
-        // Create new dynamic assessment response
         await runAsync(
           db,
           `INSERT INTO dynamic_assessment_responses (
             id, assessment_id, indicator_id, response_data,
             calculated_score, manual_score, final_score,
             comments, created_at, updated_at, is_locked
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             generateId(),
             assessmentId,
             dbIndicatorId,
-            JSON.stringify(responseData),
+            JSON.stringify(responseDataItem),
             finalScore,
             manualScore,
             finalScore,
-            JSON.stringify({ method: 'calculated' }),
+            JSON.stringify({ method: 'frontend_calculated', timestamp: new Date().toISOString() }),
             new Date().toISOString(),
             new Date().toISOString(),
             0
           ]
         );
       } else {
-        // Update existing dynamic assessment response
         await runAsync(
           db,
           `UPDATE dynamic_assessment_responses SET
-            response_data = ?,
-            calculated_score = ?,
-            manual_score = ?,
-            final_score = ?,
-            comments = ?,
-            updated_at = ?,
-            is_locked = ?
-          WHERE assessment_id = ? AND indicator_id = ?`,
+            response_data = $1,
+            calculated_score = $2,
+            manual_score = $3,
+            final_score = $4,
+            updated_at = $5
+          WHERE assessment_id = $6 AND indicator_id = $7`,
           [
-            JSON.stringify(responseData),
+            JSON.stringify(responseDataItem),
             finalScore,
             manualScore,
             finalScore,
-            JSON.stringify({ method: 'calculated' }),
             new Date().toISOString(),
-            existingResponse.is_locked || 0,
             assessmentId,
             dbIndicatorId
           ]
         );
       }
-      
-      scoringResults[indicatorId] = { finalScore };
     }
 
-    // Calculate overall score
-    const overallScore = indicatorCount > 0 ? totalScore / indicatorCount : 0;
-
-    // Update assessment overall score
-    await runAsync(
-      db,
-      `UPDATE assessments SET
-        overall_score = ?,
-        updated_at = ?
-      WHERE id = ?`,
-      [
-        overallScore,
-        new Date().toISOString(),
-        assessmentId
-      ]
-    );
-
-    // Get updated assessment
     const updatedAssessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE id = ?`,
+      `SELECT * FROM assessments WHERE id = $1`,
       [assessmentId]
     );
 
-    console.log('saveAllAssessments completed successfully:', {
-      assessmentId,
-      overallScore,
-      indicatorCount,
-      scoringResults
-    });
+    console.log('saveAllAssessments completed:', { overallScore, indicator_scores });
 
     res.json({
       success: true,
       assessment: updatedAssessment,
-      scoringResults,
       overallScore,
-      message: `All assessments saved successfully.`
+      message: `All assessments saved successfully. Total score: ${overallScore}/100`
     });
+
   } catch (err) {
-    console.error('Save all assessments error:', err);
+    console.error('❌ Save all assessments error:', err);
     res.status(500).json({
       success: false,
       error: 'Failed to save assessments',
@@ -874,7 +859,7 @@ export async function saveAllAssessments(req: Request, res: Response) {
 export async function calculateIndicatorScore(req: Request, res: Response) {
   try {
     const { indicatorId, responseData, templateId } = req.body;
-
+    
     if (!indicatorId || !responseData) {
       return res.status(400).json({
         success: false,
@@ -882,7 +867,6 @@ export async function calculateIndicatorScore(req: Request, res: Response) {
       });
     }
 
-    // Get indicator configuration
     const indicator = await IndicatorConfig.getById(indicatorId);
     if (!indicator) {
       return res.status(404).json({
@@ -891,7 +875,6 @@ export async function calculateIndicatorScore(req: Request, res: Response) {
       });
     }
 
-    // Find template if not provided
     let effectiveTemplateId = templateId;
     if (!effectiveTemplateId) {
       effectiveTemplateId = await findTemplateForIndicator(indicatorId);
@@ -904,10 +887,8 @@ export async function calculateIndicatorScore(req: Request, res: Response) {
       });
     }
 
-    // Use FormGenerator for dynamic scoring
     const scoreResult = await FormGenerator.calculateScore(responseData, effectiveTemplateId);
 
-    // Find this indicator's score in the breakdown
     const indicatorScore = scoreResult.breakdown.find(
       (item: any) => item.code === indicator.code
     );
@@ -953,7 +934,7 @@ export async function calculateIndicatorScore(req: Request, res: Response) {
 export async function submitAssessment(req: Request, res: Response) {
   try {
     const { agency_id, submitted_at } = req.body as SubmitAssessmentBody;
-
+    
     if (!agency_id) {
       return res.status(400).json({
         success: false,
@@ -965,10 +946,9 @@ export async function submitAssessment(req: Request, res: Response) {
     const currentYear = new Date().getFullYear();
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
 
-    // Check if assessment exists
     const assessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+      `SELECT * FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
       [agency_id, fiscalYear]
     );
 
@@ -979,14 +959,13 @@ export async function submitAssessment(req: Request, res: Response) {
       });
     }
 
-    // Update assessment status and submission time
     await runAsync(
       db,
       `UPDATE assessments SET
         status = 'SUBMITTED',
-        submitted_at = ?,
-        updated_at = ?
-      WHERE id = ?`,
+        submitted_at = $1,
+        updated_at = $2
+      WHERE id = $3`,
       [
         submitted_at || new Date().toISOString(),
         new Date().toISOString(),
@@ -994,10 +973,9 @@ export async function submitAssessment(req: Request, res: Response) {
       ]
     );
 
-    // Get updated assessment
     const updatedAssessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE id = ?`,
+      `SELECT * FROM assessments WHERE id = $1`,
       [assessment.id]
     );
 
@@ -1023,7 +1001,7 @@ export async function validateAssessment(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
     const { validated_by } = req.body;
-
+    
     if (!agencyId) {
       return res.status(400).json({
         success: false,
@@ -1035,10 +1013,9 @@ export async function validateAssessment(req: Request, res: Response) {
     const currentYear = new Date().getFullYear();
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
 
-    // Check if assessment exists and is submitted
     const assessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ? AND status = 'SUBMITTED'`,
+      `SELECT * FROM assessments WHERE agency_id = $1 AND fiscal_year = $2 AND status = 'SUBMITTED'`,
       [agencyId, fiscalYear]
     );
 
@@ -1049,15 +1026,14 @@ export async function validateAssessment(req: Request, res: Response) {
       });
     }
 
-    // Update assessment status to validated
     await runAsync(
       db,
       `UPDATE assessments SET
         status = 'VALIDATED',
-        validated_at = ?,
-        validated_by = ?,
-        updated_at = ?
-      WHERE id = ?`,
+        validated_at = $1,
+        validated_by = $2,
+        updated_at = $3
+      WHERE id = $4`,
       [
         new Date().toISOString(),
         validated_by || 'system',
@@ -1066,14 +1042,13 @@ export async function validateAssessment(req: Request, res: Response) {
       ]
     );
 
-    // Also validate all individual indicator responses
     await runAsync(
       db,
       `UPDATE dynamic_assessment_responses SET
-        validated_by = ?,
-        validated_at = ?,
-        updated_at = ?
-      WHERE assessment_id = ?`,
+        validated_by = $1,
+        validated_at = $2,
+        updated_at = $3
+      WHERE assessment_id = $4`,
       [
         validated_by || 'system',
         new Date().toISOString(),
@@ -1082,10 +1057,9 @@ export async function validateAssessment(req: Request, res: Response) {
       ]
     );
 
-    // Get updated assessment
     const updatedAssessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE id = ?`,
+      `SELECT * FROM assessments WHERE id = $1`,
       [assessment.id]
     );
 
@@ -1105,13 +1079,13 @@ export async function validateAssessment(req: Request, res: Response) {
 }
 
 // ============================================
-// Finalize assessment (lock scores)
+// ⭐ Finalize assessment (lock scores) - Reads from indicator_scores column
 // ============================================
 export async function finalizeAssessment(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
-    const { finalized_by, finalization_notes } = req.body;
-
+    const { finalized_by, finalization_notes, indicator_scores } = req.body;
+    
     if (!agencyId || !finalized_by) {
       return res.status(400).json({
         success: false,
@@ -1123,10 +1097,9 @@ export async function finalizeAssessment(req: Request, res: Response) {
     const currentYear = new Date().getFullYear();
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
 
-    // Get current assessment
     let assessment = await getAsync<any>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+      `SELECT *, indicator_scores FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
       [agencyId, fiscalYear]
     );
 
@@ -1137,7 +1110,6 @@ export async function finalizeAssessment(req: Request, res: Response) {
       });
     }
 
-    // Check if already finalized
     if (assessment.status === 'FINALIZED') {
       return res.status(400).json({
         success: false,
@@ -1146,119 +1118,99 @@ export async function finalizeAssessment(req: Request, res: Response) {
     }
 
     const now = new Date().toISOString();
-
-    // FIRST: Get all indicator responses for this assessment
-    const indicatorResponses = await allAsync<any[]>(
-      db,
-      `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ?`,
-      [assessment.id]
-    );
-
-    console.log(`📊 Found ${indicatorResponses.length} indicator responses to finalize`);
-
-    // SECOND: Calculate overall score from responses
-    let totalScore = 0;
-    let responseCount = 0;
+// --- UPDATED & FIXED SCORE CALCULATION BLOCK ---
     
-    for (const response of indicatorResponses) {
-      // If final_score is 0, try to calculate it from response_data
-      if (response.final_score === 0 || response.final_score === null) {
-        try {
-          const responseData = JSON.parse(response.response_data);
-          const calculatedScore = calculateAIMSScore(responseData);
-          
-          // Update the response with calculated score
-          await runAsync(
-            db,
-            `UPDATE dynamic_assessment_responses SET
-              final_score = ?,
-              updated_at = ?
-            WHERE id = ?`,
-            [calculatedScore, now, response.id]
-          );
-          
-          totalScore += calculatedScore;
-          console.log(`📊 Recalculated score for ${response.indicator_id}: ${calculatedScore}`);
-        } catch (e) {
-          console.error('Error parsing response data:', e);
-          totalScore += 0;
+    // 1. Prioritize scores from the request body (latest frontend state)
+    // 2. Fallback to existing database scores if payload is missing
+    let indicatorScores: Record<string, number> = req.body.indicator_scores || {};
+    
+    if (Object.keys(indicatorScores).length === 0 && assessment.indicator_scores) {
+      try {
+        let savedScores = assessment.indicator_scores;
+        if (typeof savedScores === 'string') {
+          savedScores = JSON.parse(savedScores);
         }
-      } else {
-        totalScore += response.final_score;
+        indicatorScores = savedScores;
+        console.log('📊 Using fallback scores from database:', indicatorScores);
+      } catch (e) {
+        console.error('❌ Error parsing database indicator_scores:', e);
       }
-      responseCount++;
+    } else {
+      console.log('📊 Using latest scores from request payload:', indicatorScores);
     }
 
-    const overallScore = responseCount > 0 ? totalScore / responseCount : 0;
-    console.log('📊 Final overall score:', { totalScore, responseCount, overallScore });
+    // Calculate the final total score from the resolved indicatorScores object
+    let totalScore = 0;
+    for (const [indicatorId, score] of Object.entries(indicatorScores)) {
+      const numScore = typeof score === 'number' ? score : Number(score);
+      totalScore += numScore;
+      console.log(`📊 Score Component - ${indicatorId}: ${numScore}`);
+    }
+    
+    console.log('📊 Final calculated total score for finalization:', totalScore);
 
-    // THIRD: Lock all indicator responses
-    if (indicatorResponses.length > 0) {
+    // Update assessment with finalized status and clear unlock fields
+    await runAsync(
+  db,
+  `UPDATE assessments SET
+    status = 'FINALIZED',
+    overall_score = $1,
+    indicator_scores = $2,     -- ADD THIS
+    finalized_at = $3,
+    finalized_by = $4,
+    finalization_notes = $5,
+    unlocked_at = NULL,
+    unlocked_by = NULL,
+    unlock_reason = NULL,
+    updated_at = $6
+  WHERE id = $7`,
+  [
+    totalScore,
+    JSON.stringify(indicatorScores), // ADD THIS
+    now,
+    finalized_by,
+    finalization_notes || 'Assessment finalized',
+    now,
+    assessment.id
+  ]
+);
+
+    // Lock dynamic responses if they exist
+    try {
       await runAsync(
         db,
         `UPDATE dynamic_assessment_responses SET
-          is_locked = 1,
-          locked_at = ?,
-          locked_by = ?,
-          updated_at = ?
-        WHERE assessment_id = ?`,
+          is_locked = true,
+          locked_at = $1,
+          locked_by = $2,
+          updated_at = $3
+        WHERE assessment_id = $4`,
         [now, finalized_by, now, assessment.id]
       );
-      console.log('✅ Locked all indicator responses');
+      console.log('✅ Locked dynamic assessment responses');
+    } catch (err) {
+      console.log('No dynamic responses to lock');
     }
 
-    // FOURTH: Update assessment status to FINALIZED with scores
-    await runAsync(
-      db,
-      `UPDATE assessments SET
-        status = 'FINALIZED',
-        overall_score = ?,
-        officer_remarks = ?,
-        finalized_at = ?,
-        finalized_by = ?,
-        finalization_notes = ?,
-        updated_at = ?
-      WHERE id = ?`,
-      [
-        overallScore,
-        finalization_notes || 'Assessment finalized',
-        now,
-        finalized_by,
-        finalization_notes || 'Assessment finalized',
-        now,
-        assessment.id
-      ]
-    );
-
-    // FIFTH: Get updated assessment
     const updatedAssessment = await getAsync<any>(
       db,
-      `SELECT * FROM assessments WHERE id = ?`,
-      [assessment.id]
-    );
-
-    const lockedCount = await getAsync<{ count: number }>(
-      db,
-      `SELECT COUNT(*) as count FROM dynamic_assessment_responses WHERE assessment_id = ? AND is_locked = 1`,
+      `SELECT * FROM assessments WHERE id = $1`,
       [assessment.id]
     );
 
     console.log('✅ Finalization complete:', {
       assessmentId: assessment.id,
       status: updatedAssessment.status,
-      overallScore: updatedAssessment.overall_score,
-      lockedResponses: lockedCount?.count || 0
+      overallScore: updatedAssessment.overall_score
     });
 
     res.json({
       success: true,
       assessment: updatedAssessment,
-      message: `Assessment finalized successfully with ${lockedCount?.count || 0} locked indicators`
+      message: `Assessment finalized successfully with total score ${totalScore}/100`
     });
-
   } catch (err) {
     console.error('❌ Finalize assessment error:', err);
-    console.error('❌ Error stack:', err instanceof Error ? err.stack : 'No stack trace');
     res.status(500).json({
       success: false,
       error: 'Failed to finalize assessment',
@@ -1274,9 +1226,9 @@ export async function unlockAssessment(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
     console.log('🟢 Backend received unlock request for agencyId:', agencyId);
-    console.log('🟢 Backend request body:', req.body);
+    
     const { unlocked_by, reason } = req.body;
-
+    
     if (!agencyId || !unlocked_by || !reason) {
       return res.status(400).json({
         success: false,
@@ -1288,10 +1240,9 @@ export async function unlockAssessment(req: Request, res: Response) {
     const currentYear = new Date().getFullYear();
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
 
-    // Get current assessment
     const assessment = await getAsync<any>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+      `SELECT * FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
       [agencyId, fiscalYear]
     );
 
@@ -1302,7 +1253,6 @@ export async function unlockAssessment(req: Request, res: Response) {
       });
     }
 
-    // Check if assessment is finalized
     if (assessment.status !== 'FINALIZED') {
       return res.status(400).json({
         success: false,
@@ -1312,17 +1262,16 @@ export async function unlockAssessment(req: Request, res: Response) {
 
     const now = new Date().toISOString();
 
-    // Update assessment status back to IN_PROGRESS and record unlock details
     await runAsync(
       db,
       `UPDATE assessments SET
         status = 'IN_PROGRESS',
-        unlocked_at = ?,
-        unlocked_by = ?,
-        unlock_reason = ?,
-        officer_remarks = ?,
-        updated_at = ?
-      WHERE id = ?`,
+        unlocked_at = $1,
+        unlocked_by = $2,
+        unlock_reason = $3,
+        officer_remarks = $4,
+        updated_at = $5
+      WHERE id = $6`,
       [
         now,
         unlocked_by,
@@ -1333,22 +1282,20 @@ export async function unlockAssessment(req: Request, res: Response) {
       ]
     );
 
-    // Also unlock all indicator responses
     await runAsync(
       db,
       `UPDATE dynamic_assessment_responses SET
-        is_locked = 0,
-        unlocked_at = ?,
-        unlocked_by = ?,
-        updated_at = ?
-      WHERE assessment_id = ?`,
+        is_locked = false,
+        unlocked_at = $1,
+        unlocked_by = $2,
+        updated_at = $3
+      WHERE assessment_id = $4`,
       [now, unlocked_by, now, assessment.id]
     );
 
-    // Get updated assessment
     const updatedAssessment = await getAsync<any>(
       db,
-      `SELECT * FROM assessments WHERE id = ?`,
+      `SELECT * FROM assessments WHERE id = $1`,
       [assessment.id]
     );
 
@@ -1359,7 +1306,6 @@ export async function unlockAssessment(req: Request, res: Response) {
     });
   } catch (err) {
     console.error('❌ Unlock assessment error:', err);
-    console.error('❌ Error stack:', err instanceof Error ? err.stack : 'No stack trace');
     res.status(500).json({
       success: false,
       error: 'Failed to unlock assessment',
@@ -1369,17 +1315,18 @@ export async function unlockAssessment(req: Request, res: Response) {
 }
 
 // ============================================
-// Get full assessment details (with all dynamic indicator responses)
+// Get full assessment details
 // ============================================
 export async function getFullAssessment(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
     const fiscalYear = (req.query.fy as string) || `${new Date().getFullYear()}–${new Date().getFullYear() + 1}`;
-
+    
     const db = getDB();
+    
     const assessment = await getAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+      `SELECT *, indicator_scores FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
       [agencyId, fiscalYear]
     );
 
@@ -1390,14 +1337,12 @@ export async function getFullAssessment(req: Request, res: Response) {
       });
     }
 
-    // Get all dynamic assessment responses
-    const indicatorResponses = await allAsync<DynamicAssessmentResponseRow[]>(
+    const indicatorResponses = await allAsync<DynamicAssessmentResponseRow>(
       db,
-      `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ? ORDER BY created_at`,
+      `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = $1 ORDER BY created_at`,
       [assessment.id]
     );
 
-    // Parse response data and enhance with indicator information
     const parsedResponses = [];
     for (const response of indicatorResponses) {
       const baseResponse = {
@@ -1407,7 +1352,6 @@ export async function getFullAssessment(req: Request, res: Response) {
         scoring_breakdown: response.comments ? JSON.parse(response.comments) : null
       };
 
-      // Get indicator details
       try {
         const indicator = await IndicatorConfig.getById(response.indicator_id);
         if (indicator) {
@@ -1433,10 +1377,25 @@ export async function getFullAssessment(req: Request, res: Response) {
       }
     }
 
+    // Parse indicator_scores safely
+    let parsedIndicatorScores = {};
+    if (assessment.indicator_scores) {
+      try {
+        let scores = assessment.indicator_scores;
+        if (typeof scores === 'string') {
+          scores = JSON.parse(scores);
+        }
+        parsedIndicatorScores = scores;
+      } catch (e) {
+        console.error('Error parsing indicator_scores:', e);
+      }
+    }
+
     res.json({
       success: true,
       assessment: {
         ...assessment,
+        indicator_scores: parsedIndicatorScores,
         dynamic_responses: parsedResponses
       }
     });
@@ -1457,20 +1416,18 @@ export async function getAssessmentStats(req: Request, res: Response) {
   try {
     const { agencyId } = req.params;
     const db = getDB();
-
-    // Get all assessments for this agency
-    const assessments = await allAsync<AssessmentRow[]>(
+    
+    const assessments = await allAsync<AssessmentRow>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? ORDER BY fiscal_year DESC`,
+      `SELECT * FROM assessments WHERE agency_id = $1 ORDER BY fiscal_year DESC`,
       [agencyId]
     );
 
-    // Get dynamic responses count
-    const dynamicResponses = await allAsync<any[]>(
+    const dynamicResponses = await allAsync<any>(
       db,
       `SELECT COUNT(*) as count FROM dynamic_assessment_responses dar
-      JOIN assessments a ON dar.assessment_id = a.id
-      WHERE a.agency_id = ?`,
+       JOIN assessments a ON dar.assessment_id = a.id
+       WHERE a.agency_id = $1`,
       [agencyId]
     );
 
@@ -1500,12 +1457,12 @@ export async function getAssessmentStats(req: Request, res: Response) {
 }
 
 // ============================================
-// Generate form for assessment using FormGenerator
+// Generate form for assessment
 // ============================================
 export async function generateAssessmentForm(req: Request, res: Response) {
   try {
     const { templateId, agencyId, indicatorId } = req.query;
-
+    
     if (!templateId && !indicatorId) {
       return res.status(400).json({
         success: false,
@@ -1534,10 +1491,8 @@ export async function generateAssessmentForm(req: Request, res: Response) {
       });
     }
 
-    // Generate form using FormGenerator
     const form = await FormGenerator.generateForm(effectiveTemplateId);
 
-    // If agencyId is provided, fetch any existing responses
     let existingResponses: Record<string, any> = {};
 
     if (agencyId) {
@@ -1547,15 +1502,15 @@ export async function generateAssessmentForm(req: Request, res: Response) {
 
       const assessment = await getAsync<AssessmentRow>(
         db,
-        `SELECT id FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+        `SELECT id FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
         [agencyId, fiscalYear]
       );
 
       if (assessment) {
-        const responses = await allAsync<any[]>(
+        const responses = await allAsync<any>(
           db,
           `SELECT indicator_id, response_data FROM dynamic_assessment_responses
-          WHERE assessment_id = ?`,
+           WHERE assessment_id = $1`,
           [assessment.id]
         );
 
@@ -1595,12 +1550,12 @@ export async function generateAssessmentForm(req: Request, res: Response) {
 }
 
 // ============================================
-// Validate form data against indicator parameters
+// Validate form data
 // ============================================
 export async function validateFormData(req: Request, res: Response) {
   try {
     const { indicatorId, formData } = req.body;
-
+    
     if (!indicatorId || !formData) {
       return res.status(400).json({
         success: false,
@@ -1608,7 +1563,6 @@ export async function validateFormData(req: Request, res: Response) {
       });
     }
 
-    // Get indicator configuration
     const indicator = await IndicatorConfig.getById(indicatorId);
     if (!indicator) {
       return res.status(404).json({
@@ -1617,7 +1571,6 @@ export async function validateFormData(req: Request, res: Response) {
       });
     }
 
-    // Validate each parameter
     const validationResults: Array<{
       parameterCode: string;
       label: string;
@@ -1631,12 +1584,10 @@ export async function validateFormData(req: Request, res: Response) {
       const value = formData[parameter.code];
       const errors: string[] = [];
 
-      // Check required
       if (parameter.required && (value === undefined || value === null || value === '')) {
         errors.push(`${parameter.label} is required`);
       }
 
-      // Type-specific validation
       if (value !== undefined && value !== null && value !== '') {
         switch (parameter.type) {
           case 'number':
@@ -1652,7 +1603,7 @@ export async function validateFormData(req: Request, res: Response) {
             }
             break;
           case 'select':
-            if (parameter.options && !parameter.options.some(opt => opt.value === value)) {
+            if (parameter.options && !parameter.options.some((opt: any) => opt.value === value)) {
               errors.push(`${parameter.label} must be one of the available options`);
             }
             break;
@@ -1713,13 +1664,12 @@ export async function getAgencyReport(req: Request, res: Response) {
     const db = getDB();
     const currentYear = new Date().getFullYear();
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
+    
+    console.log('📊 Generating report for agency:', agencyId);
 
-    console.log('📊 Generating report for agency:', agencyId, 'fiscal year:', fiscalYear);
-
-    // Get agency details
     const agency = await getAsync<any>(
       db,
-      `SELECT * FROM agencies WHERE id = ?`,
+      `SELECT * FROM agencies WHERE id = $1`,
       [agencyId]
     );
 
@@ -1730,17 +1680,16 @@ export async function getAgencyReport(req: Request, res: Response) {
       });
     }
 
-    // Get assessment data
     const assessment = await getAsync<any>(
       db,
-      `SELECT * FROM assessments WHERE agency_id = ? AND fiscal_year = ?`,
+      `SELECT *, indicator_scores FROM assessments WHERE agency_id = $1 AND fiscal_year = $2`,
       [agencyId, fiscalYear]
     );
 
     if (!assessment) {
       return res.json({
         success: true,
-        data: {
+        data: { 
           agency: {
             id: agency.id,
             name: agency.name,
@@ -1770,127 +1719,45 @@ export async function getAgencyReport(req: Request, res: Response) {
       });
     }
 
-    // Get the response data
-    const responses = await allAsync<any[]>(
-      db,
-      `SELECT * FROM dynamic_assessment_responses WHERE assessment_id = ?`,
-      [assessment.id]
-    );
-
-    console.log('📊 Found responses:', responses.length);
-
-    // Default values for all indicators
-    let iccsScore = 0;
-    let trainingScore = 0;
-    let adScore = 0;
-    let cocScore = 0;
-    let casesScore = 0;
-
-    if (responses.length > 0) {
+    // Get scores from indicator_scores column
+    let indicatorScores: Record<string, number> = {};
+    let iccsScore = 0, trainingScore = 0, adScore = 0, cocScore = 0, casesScore = 0;
+    
+    if (assessment.indicator_scores) {
       try {
-        const responseData = JSON.parse(responses[0].response_data);
-        console.log('📊 Parsed response data');
-        
-        // Extract the nested indicator data
-        let indicatorData: any = responseData;
-        
-        // Look for nested data
-        for (const key in responseData) {
-          if (typeof responseData[key] === 'object' && responseData[key] !== null) {
-            const nested = responseData[key] as any;
-            if (nested.complaint_level !== undefined || 
-                nested.total_employees !== undefined ||
-                nested.coc_level !== undefined) {
-              indicatorData = nested;
-              console.log('📊 Found nested indicator data under key:', key);
-              break;
-            }
-          }
+        let savedScores = assessment.indicator_scores;
+        if (typeof savedScores === 'string') {
+          savedScores = JSON.parse(savedScores);
         }
-
-        // ICCS Score (32 points)
-        const complaintLevel = Number(indicatorData?.complaint_level) || 0;
-        const coiLevel = Number(indicatorData?.coi_level) || 0;
-        const giftLevel = Number(indicatorData?.gift_level) || 0;
-        iccsScore = (complaintLevel * 4) + (coiLevel * 4) + (giftLevel * 4);
-        
-        // Training Score (24 points)
-        const totalEmployees = Number(indicatorData?.total_employees) || 0;
-        const completedEmployees = Number(indicatorData?.completed_employees) || 0;
-        if (totalEmployees > 0) {
-          const trainingPercent = (completedEmployees / totalEmployees) * 100;
-          if (trainingPercent >= 85) trainingScore = 24;
-          else if (trainingPercent >= 70) trainingScore = 18;
-          else if (trainingPercent >= 50) trainingScore = 10;
-        }
-        
-        // AD Score (14 points)
-        const totalOfficials = Number(indicatorData?.total_covered_officials) || 0;
-        const submittedOfficials = Number(indicatorData?.officials_submitted_on_time) || 0;
-        if (totalOfficials > 0) {
-          const adPercent = (submittedOfficials / totalOfficials) * 100;
-          if (adPercent >= 100) adScore = 14;
-          else if (adPercent >= 95) adScore = 10;
-          else if (adPercent >= 90) adScore = 5;
-        }
-        
-        // CoC Score (10 points)
-        const cocLevel = Number(indicatorData?.coc_level) || 0;
-        const cocPoints: Record<number, number> = {0: 0, 1: 4, 2: 7, 3: 10};
-        cocScore = cocPoints[cocLevel] || 0;
-        
-        // Cases Score (20 points)
-        const convictions = Number(indicatorData?.conviction_cases) || 0;
-        const prosecutions = Number(indicatorData?.prosecution_cases) || 0;
-        const adminActions = Number(indicatorData?.admin_action_cases) || 0;
-        const severityScore = (convictions * 3) + (prosecutions * 2) + (adminActions * 1);
-        
-        if (severityScore === 0) casesScore = 20;
-        else if (severityScore <= 2) casesScore = 12;
-        else if (severityScore <= 4) casesScore = 6;
-
+        indicatorScores = savedScores;
+        iccsScore = indicatorScores['ind_iccs_v3'] || 0;
+        trainingScore = indicatorScores['ind_training_v3'] || 0;
+        adScore = indicatorScores['ind_ad_v3'] || 0;
+        cocScore = indicatorScores['ind_coc_v3'] || 0;
+        casesScore = indicatorScores['ind_cases_v3'] || 0;
+        console.log('📊 Loaded scores from indicator_scores:', indicatorScores);
       } catch (e) {
-        console.error('Error parsing response data:', e);
+        console.error('Error parsing indicator_scores:', e);
       }
     }
 
     const totalScore = iccsScore + trainingScore + adScore + cocScore + casesScore;
-    const totalMaxScore = 32 + 24 + 14 + 10 + 20; // 100 points total
+    const totalMaxScore = 100;
     const percentage = (totalScore / totalMaxScore) * 100;
 
-    console.log('📊 Indicator breakdown:', {
-      iccs: { score: iccsScore, max: 32, percent: totalMaxScore > 0 ? (iccsScore/32)*100 : 0 },
-      training: { score: trainingScore, max: 24, percent: totalMaxScore > 0 ? (trainingScore/24)*100 : 0 },
-      ad: { score: adScore, max: 14, percent: totalMaxScore > 0 ? (adScore/14)*100 : 0 },
-      coc: { score: cocScore, max: 10, percent: totalMaxScore > 0 ? (cocScore/10)*100 : 0 },
-      cases: { score: casesScore, max: 20, percent: totalMaxScore > 0 ? (casesScore/20)*100 : 0 },
-      total: { score: totalScore, max: totalMaxScore, percent: percentage }
-    });
+    const highThreshold = 80;
+    const mediumThreshold = 50;
 
-    // Get integrity thresholds
-    const thresholds = await getAsync<any>(
-      db,
-      `SELECT 
-        MAX(CASE WHEN config_key = 'integrity.threshold.high' THEN config_value END) as high_threshold,
-        MAX(CASE WHEN config_key = 'integrity.threshold.medium' THEN config_value END) as medium_threshold
-       FROM system_config`,
-      []
-    );
-
-    const highThreshold = thresholds?.high_threshold ? Number(thresholds.high_threshold) : 80;
-    const mediumThreshold = thresholds?.medium_threshold ? Number(thresholds.medium_threshold) : 50;
-    
     let integrityLevel = 'Needs Improvement';
     if (percentage >= highThreshold) integrityLevel = 'High Integrity';
     else if (percentage >= mediumThreshold) integrityLevel = 'Medium Integrity';
 
-    // Build indicators array with proper individual scores
     const indicators = [
       {
         indicator_id: 'iccs',
         indicator_name: 'Internal Corruption Control Systems (ICCS)',
         indicator_code: 'ICCS',
-        category: 'Compliance',
+        category: 'Integrity Promotion',
         score: iccsScore,
         max_score: 32,
         percentage: parseFloat(((iccsScore / 32) * 100).toFixed(1))
@@ -1899,7 +1766,7 @@ export async function getAgencyReport(req: Request, res: Response) {
         indicator_id: 'training',
         indicator_name: 'Integrity Capacity Building',
         indicator_code: 'TRAINING',
-        category: 'Capacity',
+        category: 'Integrity Promotion',
         score: trainingScore,
         max_score: 24,
         percentage: parseFloat(((trainingScore / 24) * 100).toFixed(1))
@@ -1908,7 +1775,7 @@ export async function getAgencyReport(req: Request, res: Response) {
         indicator_id: 'ad',
         indicator_name: 'Asset Declaration Compliance',
         indicator_code: 'AD',
-        category: 'Compliance',
+        category: 'Integrity Promotion',
         score: adScore,
         max_score: 14,
         percentage: parseFloat(((adScore / 14) * 100).toFixed(1))
@@ -1917,7 +1784,7 @@ export async function getAgencyReport(req: Request, res: Response) {
         indicator_id: 'coc',
         indicator_name: 'Code of Conduct',
         indicator_code: 'COC',
-        category: 'Ethics',
+        category: 'Integrity Promotion',
         score: cocScore,
         max_score: 10,
         percentage: parseFloat(((cocScore / 10) * 100).toFixed(1))
@@ -1926,14 +1793,14 @@ export async function getAgencyReport(req: Request, res: Response) {
         indicator_id: 'cases',
         indicator_name: 'Corruption Case Severity',
         indicator_code: 'CASES',
-        category: 'Enforcement',
+        category: 'Corruption Accountability',
         score: casesScore,
         max_score: 20,
         percentage: parseFloat(((casesScore / 20) * 100).toFixed(1))
       }
     ];
 
-    const response = {
+    res.json({
       success: true,
       data: {
         agency: {
@@ -1964,22 +1831,199 @@ export async function getAgencyReport(req: Request, res: Response) {
           total_indicators: indicators.length
         }
       }
-    };
-
-    console.log('📊 Report summary:', {
-      totalScore,
-      percentage,
-      integrityLevel,
-      indicatorsCompleted: response.data.summary.indicators_completed
     });
-
-    res.json(response);
   } catch (error) {
     console.error('❌ Error generating agency report:', error);
-    console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     res.status(500).json({
       success: false,
       error: 'Failed to generate agency report',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+// ============================================
+// Get summary report for all agencies
+// ============================================
+export async function getSummaryReport(req: Request, res: Response) {
+  try {
+    const { fiscal_year } = req.query;
+    const db = getDB();
+    const fiscalYearParam = (req.query.fiscal_year || req.query.fy) as string;
+const targetFiscalYear = fiscalYearParam || `${new Date().getFullYear()}–${new Date().getFullYear() + 1}`;
+    
+    console.log('📊 Generating summary report for fiscal year:', targetFiscalYear);
+
+    // Fetch all active agencies
+    const agencies = await allAsync<any>(
+      db,
+      `SELECT id, name, sector, contact_email, contact_phone, status 
+       FROM agencies 
+       WHERE status = 'active' 
+       ORDER BY name`,
+      []
+    );
+
+    if (!agencies || agencies.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          fiscal_year: targetFiscalYear,
+          agencies: [],
+          summary: {
+            total_agencies: 0,
+            total_completed: 0,
+            average_score: 0,
+            integrity_breakdown: {
+              high: 0,
+              medium: 0,
+              low: 0
+            },
+            sector_breakdown: {}
+          }
+        }
+      });
+    }
+
+    // Fetch assessments for all agencies
+    const assessments = await allAsync<any>(
+      db,
+      `SELECT agency_id, overall_score, status, finalized_at, indicator_scores 
+       FROM assessments 
+       WHERE fiscal_year = $1 AND status = 'FINALIZED'`,
+      [targetFiscalYear]
+    );
+
+    // Create a map of scores by agency
+    const scoreMap = new Map();
+    assessments.forEach(assessment => {
+      scoreMap.set(assessment.agency_id, {
+        overall_score: assessment.overall_score || 0,
+        status: assessment.status,
+        finalized_at: assessment.finalized_at,
+        indicator_scores: assessment.indicator_scores
+      });
+    });
+
+    // Get thresholds from system_config
+    let highThreshold = 80;
+    let mediumThreshold = 50;
+    
+    try {
+      const highConfig = await getAsync<any>(
+        db,
+        `SELECT config_value FROM system_config WHERE config_key = $1`,
+        ['integrity.threshold.high']
+      );
+      if (highConfig && highConfig.config_value) {
+        highThreshold = Number(highConfig.config_value);
+      }
+      
+      const mediumConfig = await getAsync<any>(
+        db,
+        `SELECT config_value FROM system_config WHERE config_key = $1`,
+        ['integrity.threshold.medium']
+      );
+      if (mediumConfig && mediumConfig.config_value) {
+        mediumThreshold = Number(mediumConfig.config_value);
+      }
+    } catch (error) {
+      console.warn('Could not fetch thresholds, using defaults:', error);
+    }
+
+    // Build agency data with scores
+    const agencyData = [];
+    let totalScoreSum = 0;
+    let completedCount = 0;
+    let highCount = 0, mediumCount = 0, lowCount = 0;
+    const sectorStats: Record<string, { count: number; scoreSum: number }> = {};
+
+    for (const agency of agencies) {
+      const assessment = scoreMap.get(agency.id);
+      const overallScore = assessment?.overall_score || 0;
+      const hasAssessment = !!assessment;
+      
+      if (hasAssessment) {
+        completedCount++;
+        totalScoreSum += overallScore;
+        
+        // Count integrity levels
+        if (overallScore >= highThreshold) highCount++;
+        else if (overallScore >= mediumThreshold) mediumCount++;
+        else lowCount++;
+      }
+      
+      // Sector breakdown
+      if (!sectorStats[agency.sector]) {
+        sectorStats[agency.sector] = { count: 0, scoreSum: 0 };
+      }
+      sectorStats[agency.sector].count++;
+      if (hasAssessment) {
+        sectorStats[agency.sector].scoreSum += overallScore;
+      }
+      
+      // Determine integrity level
+      let integrityLevel = 'Not Assessed';
+      if (hasAssessment) {
+        if (overallScore >= highThreshold) integrityLevel = 'High Integrity';
+        else if (overallScore >= mediumThreshold) integrityLevel = 'Medium Integrity';
+        else integrityLevel = 'Needs Improvement';
+      }
+      
+      agencyData.push({
+        agency_id: agency.id,
+        agency_name: agency.name,
+        sector: agency.sector,
+        contact_email: agency.contact_email,
+        contact_phone: agency.contact_phone,
+        overall_score: overallScore,
+        integrity_level: integrityLevel,
+        status: assessment?.status || 'NOT_STARTED',
+        finalized_at: assessment?.finalized_at || null
+      });
+    }
+
+    // Calculate sector averages
+    const sectorBreakdown = Object.entries(sectorStats).map(([sector, stats]) => ({
+      sector,
+      agency_count: stats.count,
+      assessed_count: stats.scoreSum > 0 ? stats.count : 0,
+      average_score: stats.scoreSum > 0 ? parseFloat((stats.scoreSum / stats.count).toFixed(1)) : 0
+    }));
+
+    const averageScore = completedCount > 0 ? parseFloat((totalScoreSum / completedCount).toFixed(1)) : 0;
+
+    res.json({
+      success: true,
+      data: {
+        fiscal_year: targetFiscalYear,
+        generated_at: new Date().toISOString(),
+        thresholds: {
+          high: highThreshold,
+          medium: mediumThreshold
+        },
+        agencies: agencyData,
+        summary: {
+          total_agencies: agencies.length,
+          total_assessed: completedCount,
+          total_not_assessed: agencies.length - completedCount,
+          average_score: averageScore,
+          integrity_breakdown: {
+            high: highCount,
+            medium: mediumCount,
+            low: lowCount,
+            not_assessed: agencies.length - completedCount
+          },
+          sector_breakdown: sectorBreakdown
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error generating summary report:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate summary report',
       details: error instanceof Error ? error.message : 'Unknown error'
     });
   }

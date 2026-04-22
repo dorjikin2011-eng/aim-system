@@ -13,7 +13,8 @@ import {
   validateFormData,
   finalizeAssessment,
   unlockAssessment,
-  getAgencyReport
+  getAgencyReport,
+  getSummaryReport
 } from '../controllers/assessmentController';
 
 import { requireAuth, requireRole } from '../middleware/auth';
@@ -136,6 +137,20 @@ router.get(
   '/report/:agencyId',
   requireRole(['prevention_officer', 'admin', 'system_admin', 'commissioner', 'director', 'agency_head']),
   getAgencyReport
+);
+
+// Generate summary report for all agencies (called from dashboard)
+router.get(
+  '/reports/overall',  // ← Add this for the dashboard
+  requireRole(['prevention_officer', 'admin', 'system_admin', 'commissioner', 'director']),
+  getSummaryReport
+);
+
+// Generate summary report for all agencies - multiple roles can view
+router.get(
+  '/reports/summary',
+  requireRole(['prevention_officer', 'admin', 'system_admin', 'commissioner', 'director']),
+  getSummaryReport
 );
 
 /* =========================
