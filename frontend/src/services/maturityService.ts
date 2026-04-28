@@ -538,7 +538,7 @@ class MaturityService {
         'ind_iccs': 32,
         'ind_capacity': 24,
         'ind_ad': 14,
-        'ind_coc': 10,
+        'ind_coc_v3': 10,
         'ind_cases': 20
       };
       return weights[indicatorId] || null;

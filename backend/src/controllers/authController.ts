@@ -2,9 +2,12 @@
 
 import { Request, Response } from 'express';
 import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
 import UserService from '../services/userService';
 import { assertUserRole, User } from '../types';
 
+// JWT secret from environment variables
+const JWT_SECRET = process.env.JWT_SECRET || '5389de5bc7a704e2ee793a5b9cf2eae316bf2ddc8cd5e58c55967760f04cbd4b';
 
 export const login = async (req: Request, res: Response) => {
   const { email, password } = req.body;
@@ -122,32 +125,46 @@ export const login = async (req: Request, res: Response) => {
     };
 
     // Save session before responding (promisified for Vercel serverless)
-try {
-  await new Promise<void>((resolve, reject) => {
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-        reject(err);
-      } else {
-        console.log('✅ Session saved successfully');
-        console.log('✅ Session ID:', req.sessionID);
-        console.log('✅ Session user:', (req.session as any).user);
-        resolve();
-      }
-    });
-  });
-} catch (saveErr) {
-  return res.status(500).json({ 
-    error: 'Authentication succeeded but session failed to save' 
-  });
-}
+    try {
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) {
+            console.error('Session save error:', err);
+            reject(err);
+          } else {
+            console.log('✅ Session saved successfully');
+            console.log('✅ Session ID:', req.sessionID);
+            console.log('✅ Session user:', (req.session as any).user);
+            resolve();
+          }
+        });
+      });
+    } catch (saveErr) {
+      console.warn('Session save failed, but continuing with JWT...');
+    }
 
-res.json({ 
-  success: true, 
-  user: (req.session as any).user,
-  message: 'Login successful',
-  sessionId: req.sessionID
-});
+    // Generate JWT token as fallback for Vercel serverless
+    const jwtToken = jwt.sign(
+      { 
+        id: authUser.id, 
+        email: authUser.email, 
+        role: role,
+        name: authUser.name,
+        agency_id: authUser.agency_id || null
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('✅ JWT token generated for user:', authUser.email);
+
+    res.json({ 
+      success: true, 
+      user: (req.session as any).user,
+      token: jwtToken,
+      message: 'Login successful',
+      sessionId: req.sessionID
+    });
 
   } catch (err: any) {
     console.error('Login error:', err);
@@ -183,17 +200,40 @@ export const logout = (req: Request, res: Response) => {
 };
 
 export const getCurrentUser = (req: Request, res: Response) => {
+  // First try to get user from session
   if ((req.session as any).user) {
-    res.json({ 
+    return res.json({ 
       success: true, 
       user: (req.session as any).user 
     });
-  } else {
-    res.status(401).json({ 
-      success: false, 
-      error: 'Not authenticated' 
-    });
   }
+  
+  // Then try to get from Authorization header (JWT)
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      return res.json({ 
+        success: true, 
+        user: {
+          id: decoded.id,
+          email: decoded.email,
+          name: decoded.name,
+          role: decoded.role,
+          agency_id: decoded.agency_id || null
+        }
+      });
+    } catch (err) {
+      console.error('JWT verification failed:', err);
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  }
+  
+  res.status(401).json({ 
+    success: false, 
+    error: 'Not authenticated' 
+  });
 };
 
 export const changePassword = async (req: Request, res: Response) => {
@@ -225,16 +265,33 @@ export const changePassword = async (req: Request, res: Response) => {
   }
 
   try {
-    if (!(req.session as any)?.user) {
+    let userId: string | null = null;
+    
+    // Try to get user from session first
+    if ((req.session as any)?.user) {
+      userId = (req.session as any).user.id;
+    } else {
+      // Try JWT token
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET) as any;
+          userId = decoded.id;
+        } catch (err) {
+          console.error('JWT verification failed:', err);
+        }
+      }
+    }
+
+    if (!userId) {
       return res.status(401).json({ 
         success: false,
         error: 'Not authenticated' 
       });
     }
 
-    const currentUser = (req.session as any).user;
-
-    const isPasswordValid = await UserService.verifyPassword(currentUser.id, currentPassword);
+    const isPasswordValid = await UserService.verifyPassword(userId, currentPassword);
     if (!isPasswordValid) {
       return res.status(401).json({ 
         success: false,
@@ -249,7 +306,7 @@ export const changePassword = async (req: Request, res: Response) => {
       });
     }
 
-    await UserService.updatePassword(currentUser.id, newPassword);
+    await UserService.updatePassword(userId, newPassword);
 
     res.json({ 
       success: true, 
@@ -269,14 +326,31 @@ export const updateProfile = async (req: Request, res: Response) => {
   const { name, department, phone, profile_image } = req.body;
 
   try {
-    if (!(req.session as any)?.user) {
+    let userId: string | null = null;
+    
+    // Try to get user from session first
+    if ((req.session as any)?.user) {
+      userId = (req.session as any).user.id;
+    } else {
+      // Try JWT token
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET) as any;
+          userId = decoded.id;
+        } catch (err) {
+          console.error('JWT verification failed:', err);
+        }
+      }
+    }
+
+    if (!userId) {
       return res.status(401).json({ 
         success: false,
         error: 'Not authenticated' 
       });
     }
-
-    const currentUser = (req.session as any).user;
 
     if (!name && !department && !phone && !profile_image) {
       return res.status(400).json({
@@ -285,28 +359,31 @@ export const updateProfile = async (req: Request, res: Response) => {
       });
     }
 
-    await UserService.updateProfile(currentUser.id, {
+    await UserService.updateProfile(userId, {
       name,
       department,
       phone,
       profile_image
     });
 
-    if (name) (req.session as any).user.name = name;
-    if (department) (req.session as any).user.department = department;
-    if (phone) (req.session as any).user.phone = phone;
-    if (profile_image) (req.session as any).user.profile_image = profile_image;
+    // Update session if it exists
+    if ((req.session as any)?.user) {
+      if (name) (req.session as any).user.name = name;
+      if (department) (req.session as any).user.department = department;
+      if (phone) (req.session as any).user.phone = phone;
+      if (profile_image) (req.session as any).user.profile_image = profile_image;
 
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-      }
-    });
+      req.session.save((err) => {
+        if (err) {
+          console.error('Session save error:', err);
+        }
+      });
+    }
 
     res.json({
       success: true,
       message: 'Profile updated successfully',
-      user: (req.session as any).user
+      user: (req.session as any).user || { id: userId, name, department, phone, profile_image }
     });
 
   } catch (error) {
@@ -320,16 +397,33 @@ export const updateProfile = async (req: Request, res: Response) => {
 
 export const getUserStatus = async (req: Request, res: Response) => {
   try {
-    if (!(req.session as any)?.user) {
+    let email: string | null = null;
+    
+    // Try to get user from session first
+    if ((req.session as any)?.user) {
+      email = (req.session as any).user.email;
+    } else {
+      // Try JWT token
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET) as any;
+          email = decoded.email;
+        } catch (err) {
+          console.error('JWT verification failed:', err);
+        }
+      }
+    }
+
+    if (!email) {
       return res.status(401).json({
         success: false,
         error: 'Not authenticated'
       });
     }
 
-    const currentUser = (req.session as any).user;
-
-    const user = await UserService.findByEmail(currentUser.email) as User | null;
+    const user = await UserService.findByEmail(email) as User | null;
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -340,8 +434,8 @@ export const getUserStatus = async (req: Request, res: Response) => {
     let isLocked = false;
     let lockTimeRemaining = 0;
     try {
-      isLocked = await UserService.isAccountLocked(currentUser.email);
-      lockTimeRemaining = await UserService.getLockTimeRemaining(currentUser.email);
+      isLocked = await UserService.isAccountLocked(email);
+      lockTimeRemaining = await UserService.getLockTimeRemaining(email);
     } catch (lockError) {
       const error = lockError as Error;
       console.warn('Lock status check failed:', error.message);
@@ -370,18 +464,37 @@ export const getUserStatus = async (req: Request, res: Response) => {
 
 export const validateSession = async (req: Request, res: Response) => {
   try {
-    if (!(req.session as any)?.user) {
+    let currentUser: any = null;
+    
+    // Try to get user from session first
+    if ((req.session as any)?.user) {
+      currentUser = (req.session as any).user;
+    } else {
+      // Try JWT token
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET) as any;
+          currentUser = decoded;
+        } catch (err) {
+          console.error('JWT verification failed:', err);
+        }
+      }
+    }
+
+    if (!currentUser) {
       return res.status(401).json({
         success: false,
         error: 'Not authenticated'
       });
     }
 
-    const currentUser = (req.session as any).user;
-
     const authUser = await UserService.getAuthUserById(currentUser.id);
     if (!authUser) {
-      req.session.destroy(() => {});
+      if (req.session) {
+        req.session.destroy(() => {});
+      }
       return res.status(401).json({
         success: false,
         error: 'User not found or account deactivated'
@@ -392,31 +505,50 @@ export const validateSession = async (req: Request, res: Response) => {
     const isActive = user?.is_active === true || user?.is_active === 1;
     
     if (!isActive) {
-      req.session.destroy(() => {});
+      if (req.session) {
+        req.session.destroy(() => {});
+      }
       return res.status(403).json({
         success: false,
         error: 'Account is deactivated'
       });
     }
 
-    (req.session as any).user = {
-      ...(req.session as any).user,
-      name: authUser.name,
-      department: authUser.department,
-      phone: authUser.phone,
-      profile_image: authUser.profile_image,
-      last_login: authUser.last_login
-    };
+    // Update session if it exists
+    if ((req.session as any).user) {
+      (req.session as any).user = {
+        ...(req.session as any).user,
+        name: authUser.name,
+        department: authUser.department,
+        phone: authUser.phone,
+        profile_image: authUser.profile_image,
+        last_login: authUser.last_login
+      };
 
-    req.session.save((err) => {
-      if (err) {
-        console.error('Session save error:', err);
-      }
-    });
+      req.session.save((err) => {
+        if (err) {
+          console.error('Session save error:', err);
+        }
+      });
+    }
+
+    // Generate new JWT token
+    const newJwtToken = jwt.sign(
+      { 
+        id: authUser.id, 
+        email: authUser.email, 
+        role: authUser.role,
+        name: authUser.name,
+        agency_id: authUser.agency_id || null
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
 
     res.json({
       success: true,
-      user: (req.session as any).user,
+      user: (req.session as any).user || currentUser,
+      token: newJwtToken,
       message: 'Session is valid'
     });
 
@@ -440,7 +572,6 @@ export const getUserProfile = async (req: Request, res: Response) => {
       });
     }
 
-    // Ensure userId is a string (not string[])
     const userIdString = Array.isArray(userId) ? userId[0] : userId;
 
     if (!userIdString) {
@@ -458,8 +589,27 @@ export const getUserProfile = async (req: Request, res: Response) => {
       });
     }
 
-    const isSelf = (req.session as any)?.user?.id === userId;
-    const isAdmin = (req.session as any)?.user?.role === 'system_admin';
+    let sessionUser = (req.session as any)?.user;
+    let isSelf = false;
+    let isAdmin = false;
+
+    if (sessionUser) {
+      isSelf = sessionUser.id === userId;
+      isAdmin = sessionUser.role === 'system_admin';
+    } else {
+      // Try JWT token
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET) as any;
+          isSelf = decoded.id === userId;
+          isAdmin = decoded.role === 'system_admin';
+        } catch (err) {
+          console.error('JWT verification failed:', err);
+        }
+      }
+    }
 
     const userData = {
       id: authUser.id,

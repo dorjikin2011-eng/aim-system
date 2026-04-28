@@ -1,51 +1,306 @@
 // frontend/src/services/api.ts
 
-// ✅ Vite-native env access (auto-typed by vite/client)
-export const API_BASE = import.meta.env.VITE_API_BASE || 'https://backend-theta-navy-44.vercel.app';
+// 1. Define API_BASE (Ensure no trailing slash)
+export const API_BASE = (import.meta.env.VITE_API_BASE || 'https://backend-theta-navy-44.vercel.app').replace(/\/$/, '');
 
-// Helper function for API calls
+// 2. The Refined apiCall Function
 export async function apiCall(endpoint: string, options: RequestInit = {}) {
-  try {
-    // ✅ Build absolute URL to backend
-    const apiPath = endpoint.startsWith('/api') ? endpoint : `/api${endpoint}`;
-    const url = `${API_BASE}${apiPath}`;
+  // Ensure endpoint starts with / and doesn't double up /api
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const apiPath = cleanEndpoint.startsWith('/api') ? cleanEndpoint : `/api${cleanEndpoint}`;
+  
+  const url = `${API_BASE}${apiPath}`;
 
+  console.log(`🚀 Calling API: ${url}`);
+  console.log(`📤 Request method: ${options.method || 'GET'}`);
+
+  // Get token from localStorage
+  const token = localStorage.getItem('token');
+
+  try {
     const response = await fetch(url, {
       credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
         ...options.headers,
       },
       ...options,
     });
 
-    // ✅ Handle 401 for /auth/me specially
-    if (endpoint === '/auth/me' && response.status === 401) {
+    console.log(`📥 Response status: ${response.status} ${response.statusText}`);
+
+    // Handle 401 for /auth/me specially
+    if (endpoint.includes('/auth/me') && response.status === 401) {
       return { user: null };
     }
 
+    // Handle 401 for other endpoints
     if (response.status === 401) {
+      // Clear invalid token
+      localStorage.removeItem('token');
       throw new Error('unauthorized');
     }
 
-    // ✅ Safety: Ensure JSON response
-    const contentType = response.headers.get('content-type');
-    if (!contentType?.includes('application/json')) {
-      const text = await response.text();
-      console.error('❌ Non-JSON response:', { url, status: response.status, contentType, preview: text.substring(0, 200) });
-      throw new Error(`Server returned ${response.status} with content-type: ${contentType}. Expected application/json`);
+    // Read body as text first to handle non-JSON responses safely
+    const text = await response.text();
+    console.log(`📄 Response preview: ${text.substring(0, 200)}`);
+    
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (e) {
+      console.error('❌ API Error - Received non-JSON response from:', url);
+      console.error('Response preview:', text.substring(0, 500));
+      
+      // Check if it's an HTML error page
+      if (text.includes('<!doctype') || text.includes('<html')) {
+        throw new Error(`Server returned HTML instead of JSON. Endpoint may not exist: ${url}`);
+      }
+      throw new Error(`Server returned invalid response: ${text.substring(0, 100)}`);
     }
 
+    // Handle non-OK responses using the parsed data
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `API Error: ${response.status}`);
+      throw new Error(data.error || data.message || `API Error: ${response.status}`);
     }
 
-    return response.json();
+    // Return the parsed JSON data
+    return data;
   } catch (error) {
+    console.error(`❌ Fetch error for ${url}:`, error);
     throw error;
   }
 }
+
+// ===== AUTHENTICATION ENDPOINTS =====
+
+export const login = async (email: string, password: string) => {
+  return apiCall('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password })
+  });
+};
+
+export const logout = async () => {
+  return apiCall('/auth/logout', {
+    method: 'POST'
+  });
+};
+
+export const getCurrentUser = async () => {
+  try {
+    const response = await apiCall('/auth/me');
+    return response;
+  } catch (error: any) {
+    if (error.message === 'unauthorized') {
+      return { user: null };
+    }
+    throw error;
+  }
+};
+
+// ===== ADMIN: USERS ENDPOINTS =====
+
+export const getUsers = async (params?: {
+  agencyId?: string;
+  role?: string;
+  search?: string;
+}) => {
+  const query = new URLSearchParams();
+  if (params?.agencyId) query.append('agency_id', params.agencyId);
+  if (params?.role) query.append('role', params.role);
+  if (params?.search) query.append('search', params.search);
+  
+  const queryString = query.toString();
+  return apiCall(`/admin/users${queryString ? `?${queryString}` : ''}`);
+};
+
+export const getUser = async (id: string) => {
+  return apiCall(`/admin/users/${id}`);
+};
+
+export const createUser = async (userData: {
+  email: string;
+  name: string;
+  role: string;
+  agency_id?: string;
+  password?: string;
+}) => {
+  return apiCall('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(userData)
+  });
+};
+
+export const updateUser = async (id: string, updates: Partial<User>) => {
+  return apiCall(`/admin/users/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(updates)
+  });
+};
+
+export const deleteUser = async (id: string) => {
+  return apiCall(`/admin/users/${id}`, {
+    method: 'DELETE'
+  });
+};
+
+// ===== ADMIN: AGENCIES ENDPOINTS =====
+
+export const getAgencies = async (params?: {
+  activeOnly?: boolean;
+  search?: string;
+}) => {
+  const query = new URLSearchParams();
+  if (params?.activeOnly) query.append('active_only', 'true');
+  if (params?.search) query.append('search', params.search);
+  
+  const queryString = query.toString();
+  return apiCall(`/admin/agencies${queryString ? `?${queryString}` : ''}`);
+};
+
+export const getAgency = async (id: string) => {
+  return apiCall(`/admin/agencies/${id}`);
+};
+
+export const createAgency = async (agencyData: {
+  name: string;
+  code: string;
+  description?: string;
+  parent_id?: string;
+}) => {
+  return apiCall('/admin/agencies', {
+    method: 'POST',
+    body: JSON.stringify(agencyData)
+  });
+};
+
+export const updateAgency = async (id: string, updates: any) => {
+  return apiCall(`/admin/agencies/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(updates)
+  });
+};
+
+export const deleteAgency = async (id: string) => {
+  return apiCall(`/admin/agencies/${id}`, {
+    method: 'DELETE'
+  });
+};
+
+// ===== ADMIN: REPORTS ENDPOINTS =====
+
+export const getReports = async (params?: {
+  type?: string;
+  agencyId?: string;
+  fromDate?: string;
+  toDate?: string;
+}) => {
+  const query = new URLSearchParams();
+  if (params?.type) query.append('type', params.type);
+  if (params?.agencyId) query.append('agency_id', params.agencyId);
+  if (params?.fromDate) query.append('from_date', params.fromDate);
+  if (params?.toDate) query.append('to_date', params.toDate);
+  
+  const queryString = query.toString();
+  return apiCall(`/admin/reports${queryString ? `?${queryString}` : ''}`);
+};
+
+export const generateReport = async (reportConfig: {
+  type: string;
+  title: string;
+  parameters: Record<string, any>;
+  format?: 'pdf' | 'excel' | 'csv';
+}) => {
+  return apiCall('/admin/reports/generate', {
+    method: 'POST',
+    body: JSON.stringify(reportConfig)
+  });
+};
+
+export const getReport = async (id: string) => {
+  return apiCall(`/admin/reports/${id}`);
+};
+
+export const downloadReport = async (id: string, format: 'pdf' | 'excel' | 'csv' = 'pdf') => {
+  // For file downloads, we need to handle differently
+  const token = localStorage.getItem('token');
+  const url = `${API_BASE}/api/admin/reports/${id}/download?format=${format}`;
+
+  const response = await fetch(url, {
+    credentials: 'include',
+    headers: {
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+    },
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Download failed: ${response.status}`);
+  }
+  
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = `report_${id}.${format}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(downloadUrl);
+  
+  return { success: true };
+};
+
+// ===== ADMIN: ASSIGNMENTS ENDPOINTS =====
+
+export const getAssignments = async (params?: {
+  userId?: string;
+  agencyId?: string;
+  status?: string;
+  fromDate?: string;
+  toDate?: string;
+}) => {
+  const query = new URLSearchParams();
+  if (params?.userId) query.append('user_id', params.userId);
+  if (params?.agencyId) query.append('agency_id', params.agencyId);
+  if (params?.status) query.append('status', params.status);
+  if (params?.fromDate) query.append('from_date', params.fromDate);
+  if (params?.toDate) query.append('to_date', params.toDate);
+  
+  const queryString = query.toString();
+  return apiCall(`/admin/assignments${queryString ? `?${queryString}` : ''}`);
+};
+
+export const getAssignment = async (id: string) => {
+  return apiCall(`/admin/assignments/${id}`);
+};
+
+export const createAssignment = async (assignmentData: {
+  user_id: string;
+  agency_id: string;
+  role: string;
+  start_date?: string;
+  end_date?: string;
+}) => {
+  return apiCall('/admin/assignments', {
+    method: 'POST',
+    body: JSON.stringify(assignmentData)
+  });
+};
+
+export const updateAssignment = async (id: string, updates: any) => {
+  return apiCall(`/admin/assignments/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(updates)
+  });
+};
+
+export const deleteAssignment = async (id: string) => {
+  return apiCall(`/admin/assignments/${id}`, {
+    method: 'DELETE'
+  });
+};
 
 // ===== CONFIGURATION ENDPOINTS =====
 
@@ -75,12 +330,12 @@ export const getIndicators = async (params?: {
   category?: string;
 }) => {
   const query = new URLSearchParams();
-  if (params?.activeOnly) query.append('activeOnly', 'true');
-  if (params?.includeParameters) query.append('includeParameters', 'true');
-  if (params?.includeRules) query.append('includeRules', 'true');
+  if (params?.activeOnly) query.append('active_only', 'true');
+  if (params?.includeParameters) query.append('include_parameters', 'true');
+  if (params?.includeRules) query.append('include_rules', 'true');
   if (params?.category) query.append('category', params.category);
   
-  return apiCall(`/admin/config/indicators?${query.toString()}`);
+  return apiCall(`/indicator-config?${query.toString()}`);
 };
 
 // Get single indicator
@@ -321,100 +576,23 @@ export const validateFormData = async (data: {
   });
 };
 
-// Get agency report
-export const getAgencyReport = async (agencyId: string) => {
-  return apiCall(`/assessments/report/${agencyId}`);
-};
+// Types
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  agency_id: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
 
-// ===== AGENCY & SCORE ENDPOINTS =====
-
-// Get agency scores (with optional fiscal year)
-export const getAgencyScores = async (fiscalYear?: string) => {
-  const query = fiscalYear ? `?fiscal_year=${fiscalYear}` : '';
-  return apiCall(`/agency-scores${query}`);
-};
-
-// Get report summary (with optional fiscal year)
-export const getReportSummary = async (fiscalYear?: string) => {
-  const query = fiscalYear ? `?fiscal_year=${fiscalYear}` : '';
-  return apiCall(`/reports/summary${query}`);
-};
-
-// Export report to Excel
-export const exportReportToExcel = async (fiscalYear?: string) => {
-  const query = fiscalYear ? `?fiscal_year=${fiscalYear}` : '';
-  return apiCall(`/reports/export${query}`);
-};
-
-// ===== AUTH & USER ENDPOINTS =====
-
-// Login
-export const login = async (credentials: { email: string; password: string }) => {
-  return apiCall('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify(credentials)
-  });
-};
-
-// Logout
-export const logout = async () => {
-  return apiCall('/auth/logout', {
-    method: 'POST'
-  });
-};
-
-// Get current user - CRITICAL for session persistence on refresh
-export const getCurrentUser = async () => {
-  return apiCall('/auth/me');
-};
-
-// ===== AGENCY MANAGEMENT =====
-
-// Get all agencies
-export const getAgencies = async () => {
-  return apiCall('/agencies');
-};
-
-// Get single agency
-export const getAgency = async (id: string) => {
-  return apiCall(`/agencies/${id}`);
-};
-
-// Create agency
-export const createAgency = async (agency: any) => {
-  return apiCall('/agencies', {
-    method: 'POST',
-    body: JSON.stringify(agency)
-  });
-};
-
-// Update agency
-export const updateAgency = async (id: string, updates: any) => {
-  return apiCall(`/agencies/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(updates)
-  });
-};
-
-// Delete agency
-export const deleteAgency = async (id: string) => {
-  return apiCall(`/agencies/${id}`, {
-    method: 'DELETE'
-  });
-};
-
-// ===== ERROR HANDLING =====
-
-// Global error handler for API responses
-export const handleApiError = (error: any): string => {
-  if (error.message === 'unauthorized') {
-    return 'Your session has expired. Please log in again.';
-  }
-  if (error.response?.data?.error) {
-    return error.response.data.error;
-  }
-  if (error.message?.includes('Network Error') || error.message?.includes('Failed to fetch')) {
-    return 'Network error. Please check your connection.';
-  }
-  return error.message || 'An unexpected error occurred. Please try again.';
-};// Rebuilt: Thu Apr  9 10:06:33 +06 2026
+export interface Agency {
+  id: string;
+  name: string;
+  code: string;
+  description?: string;
+  parent_id?: string;
+  created_at?: string;
+  updated_at?: string;
+}

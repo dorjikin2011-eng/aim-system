@@ -1,12 +1,12 @@
-//backend/src/utils/ConfigValidator.ts
+// backend/src/utils/ConfigValidator.ts
+
 import { IndicatorConfig } from '../models/IndicatorConfig';
 import { 
   IndicatorDefinition, 
   ParameterDefinition, 
   ScoringRule,
   IndicatorCategory,
-  ParameterType,
-  ValidationRule
+  ParameterType
 } from '../types/config';
 
 export class ConfigValidator {
@@ -123,6 +123,7 @@ export class ConfigValidator {
 
   /**
    * Validate form template configuration
+   * FIXED: Now accepts both camelCase and snake_case field names
    */
   static validateTemplate(template: any): { isValid: boolean; errors: string[]; warnings: string[] } {
     const errors: string[] = [];
@@ -142,10 +143,14 @@ export class ConfigValidator {
         
         if (section.fields && Array.isArray(section.fields)) {
           section.fields.forEach((field: any, fIndex: number) => {
-            if (!field.indicatorId) {
+            // FIXED: Check both camelCase and snake_case
+            const indicatorId = field.indicatorId || field.indicator_id;
+            const parameterCode = field.parameterCode || field.parameter_code;
+            
+            if (!indicatorId) {
               errors.push(`Section ${sIndex + 1}, Field ${fIndex + 1}: Indicator ID is required`);
             }
-            if (!field.parameterCode) {
+            if (!parameterCode) {
               errors.push(`Section ${sIndex + 1}, Field ${fIndex + 1}: Parameter code is required`);
             }
             if (!field.label) {
@@ -380,19 +385,22 @@ export class ConfigValidator {
     
     // Validate each field
     allFields.forEach(field => {
-      const value = submissionData[field.parameterCode];
+      // FIXED: Get parameter code from either naming convention
+      const paramCode = field.parameterCode || field.parameter_code;
+      const value = submissionData[paramCode];
+      
       const paramConfig: ParameterDefinition = {
-  code: field.parameterCode,
-  label: field.label,
-  type: field.type,
-  required: field.required,
-  displayOrder: field.displayOrder || 0,
-  isActive: true,
-  validation: field.uiSettings?.validation || {},
-  uiSettings: field.uiSettings || {},  // <-- Comma here is important
-  scoringRuleIds: [],                  // <-- New field
-  dependencies: []                     // <-- New field
-};
+        code: paramCode,
+        label: field.label,
+        type: field.type,
+        required: field.required,
+        displayOrder: field.displayOrder || 0,
+        isActive: true,
+        validation: field.uiSettings?.validation || {},
+        uiSettings: field.uiSettings || {},
+        scoringRuleIds: [],
+        dependencies: []
+      };
       
       const validation = this.validateParameterValue(paramConfig, value);
       

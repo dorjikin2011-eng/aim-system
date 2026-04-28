@@ -1,4 +1,5 @@
-// backend/src/models/SystemConfig.ts
+// backend/src/models/SystemConfig.ts - POSTGRESQL FIXED VERSION
+
 import { getDB, getAsync, allAsync, runAsync } from './db';
 import { SystemConfigItem } from '../types/config';
 
@@ -23,7 +24,7 @@ export class SystemConfig {
     const db = getDB();
     const row = await getAsync<any>(
       db,
-      'SELECT * FROM system_config WHERE config_key = ?',
+      'SELECT * FROM system_config WHERE config_key = $1',
       [key]
     );
     
@@ -38,7 +39,7 @@ export class SystemConfig {
     const db = getDB();
     const rows = await allAsync<any>(
       db,
-      'SELECT * FROM system_config WHERE category = ? ORDER BY config_key',
+      'SELECT * FROM system_config WHERE category = $1 ORDER BY config_key',
       [category]
     );
     
@@ -60,7 +61,7 @@ export class SystemConfig {
       case 'number':
         return Number(config.configValue) as T;
       case 'boolean':
-        return (config.configValue === 'true' || config.configValue === '1') as T;
+        return (config.configValue === 'true' || config.configValue === '1' || config.configValue === 't') as T;
       case 'json':
         try {
           return JSON.parse(config.configValue) as T;
@@ -114,23 +115,23 @@ export class SystemConfig {
       const existing = await this.getByKey(key);
       
       if (existing) {
-        // Update existing
+        // Update existing - FIXED: Use PostgreSQL boolean
         await runAsync(
           db,
           `UPDATE system_config SET 
-            config_value = ?, config_type = ?, category = ?, 
-            description = ?, is_public = ?, updated_at = CURRENT_TIMESTAMP 
-           WHERE config_key = ?`,
-          [stringValue, configType, category, description, isPublic ? 1 : 0, key]
+            config_value = $1, config_type = $2, category = $3, 
+            description = $4, is_public = $5, updated_at = CURRENT_TIMESTAMP 
+           WHERE config_key = $6`,
+          [stringValue, configType, category, description, isPublic, key]
         );
       } else {
-        // Insert new
+        // Insert new - FIXED: Use PostgreSQL boolean
         await runAsync(
           db,
           `INSERT INTO system_config 
             (config_key, config_value, config_type, category, description, is_public) 
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [key, stringValue, configType, category, description, isPublic ? 1 : 0]
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [key, stringValue, configType, category, description, isPublic]
         );
       }
       
@@ -155,7 +156,7 @@ export class SystemConfig {
     const db = getDB();
     
     try {
-      await runAsync(db, 'BEGIN TRANSACTION');
+      await runAsync(db, 'BEGIN');
       
       for (const config of configs) {
         await this.setValue(
@@ -186,7 +187,7 @@ export class SystemConfig {
     try {
       await runAsync(
         db,
-        'DELETE FROM system_config WHERE config_key = ?',
+        'DELETE FROM system_config WHERE config_key = $1',
         [key]
       );
       return true;
@@ -240,13 +241,13 @@ export class SystemConfig {
         }
       ]);
       
-      // Log the change
+      // Log the change - FIXED: Use PostgreSQL $ placeholders
       const db = getDB();
       await runAsync(
         db,
         `INSERT INTO audit_logs 
           (id, actor_id, actor_email, actor_name, actor_role, action, target_type, details)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           `audit_${Date.now()}`,
           'system',
@@ -272,16 +273,15 @@ export class SystemConfig {
   }
 
   /**
-   * Get indicator weights
+   * Get indicator weights - FIXED: Use PostgreSQL boolean true
    */
   static async getIndicatorWeights(): Promise<Record<string, number>> {
     const weights: Record<string, number> = {};
     
-    // Get all indicators and their weights
     const db = getDB();
     const rows = await allAsync<any>(
       db,
-      'SELECT code, weight FROM indicators WHERE is_active = 1'
+      'SELECT code, weight FROM indicators WHERE is_active = true'
     );
     
     rows.forEach(row => {
@@ -292,16 +292,16 @@ export class SystemConfig {
   }
 
   /**
-   * Calculate total weight
+   * Calculate total weight - FIXED: Use PostgreSQL boolean true
    */
   static async getTotalWeight(): Promise<number> {
     const db = getDB();
-    const result = await getAsync<{ total: number }>(
+    const result = await getAsync<{ total: string }>(
       db,
-      'SELECT SUM(weight) as total FROM indicators WHERE is_active = 1'
+      'SELECT SUM(weight) as total FROM indicators WHERE is_active = true'
     );
     
-    return result?.total || 0;
+    return parseFloat(result?.total || '0');
   }
 
   /**
@@ -315,7 +315,7 @@ export class SystemConfig {
   }> {
     const totalWeight = await this.getTotalWeight();
     const deviation = Math.abs(totalWeight - 100);
-    const isValid = deviation < 0.01; // Allow small floating point errors
+    const isValid = deviation < 0.01;
     
     let message: string | undefined;
     
@@ -331,12 +331,12 @@ export class SystemConfig {
   }
 
   /**
-   * Get public configuration (for frontend)
+   * Get public configuration (for frontend) - FIXED: Use PostgreSQL boolean
    */
   static async getPublicConfig(): Promise<Record<string, any>> {
     const publicConfigs = await allAsync<any>(
       getDB(),
-      'SELECT config_key, config_value, config_type FROM system_config WHERE is_public = 1'
+      'SELECT config_key, config_value, config_type FROM system_config WHERE is_public = true'
     );
     
     const result: Record<string, any> = {};
@@ -347,7 +347,7 @@ export class SystemConfig {
           result[config.config_key] = Number(config.config_value);
           break;
         case 'boolean':
-          result[config.config_key] = config.config_value === 'true' || config.config_value === '1';
+          result[config.config_key] = config.config_value === 'true' || config.config_value === '1' || config.config_value === 't';
           break;
         case 'json':
         case 'array':
@@ -387,25 +387,25 @@ export class SystemConfig {
       usersCount
     ] = await Promise.all([
       this.getValue<string>('system.version', '2.0.0'),
-      getAsync<{ version: string }>(db, 'SELECT sqlite_version() as version'),
-      getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM indicators'),
-      getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM assessments'),
-      getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM agencies'),
-      getAsync<{ count: number }>(db, 'SELECT COUNT(*) as count FROM users')
+      getAsync<{ version: string }>(db, 'SELECT version() as version'),
+      getAsync<{ count: string }>(db, 'SELECT COUNT(*) as count FROM indicators'),
+      getAsync<{ count: string }>(db, 'SELECT COUNT(*) as count FROM assessments'),
+      getAsync<{ count: string }>(db, 'SELECT COUNT(*) as count FROM agencies'),
+      getAsync<{ count: string }>(db, 'SELECT COUNT(*) as count FROM users')
     ]);
     
     return {
       version: version || '2.0.0',
-      databaseVersion: dbVersion?.version || 'unknown',
-      totalIndicators: indicatorsCount?.count || 0,
-      totalAssessments: assessmentsCount?.count || 0,
-      totalAgencies: agenciesCount?.count || 0,
-      totalUsers: usersCount?.count || 0
+      databaseVersion: dbVersion?.version || 'PostgreSQL',
+      totalIndicators: parseInt(indicatorsCount?.count || '0', 10),
+      totalAssessments: parseInt(assessmentsCount?.count || '0', 10),
+      totalAgencies: parseInt(agenciesCount?.count || '0', 10),
+      totalUsers: parseInt(usersCount?.count || '0', 10)
     };
   }
 
   /**
-   * Map database row to SystemConfigItem
+   * Map database row to SystemConfigItem - FIXED: Use PostgreSQL boolean
    */
   private static mapRowToConfig(row: any): SystemConfigItem {
     return {
@@ -415,7 +415,7 @@ export class SystemConfig {
       configType: row.config_type as 'string' | 'number' | 'boolean' | 'json' | 'array',
       category: row.category,
       description: row.description,
-      isPublic: row.is_public === 1,
+      isPublic: row.is_public === true || row.is_public === 1 || row.is_public === 't',
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };

@@ -1,4 +1,4 @@
-// backend/src/models/IndicatorConfig.ts - UPDATED WITH DEBUG
+// backend/src/models/IndicatorConfig.ts - COMPLETE POSTGRESQL FIXED VERSION
 
 import { getDB, getAsync, allAsync, runAsync } from './db';
 import { 
@@ -8,9 +8,28 @@ import {
   IndicatorCategory
 } from '../types/config';
 
-// Define a type for creating indicators without auto-generated fields
+function safeParse(value: any) {
+  try {
+    return typeof value === 'string' ? JSON.parse(value) : value;
+  } catch {
+    return [];
+  }
+}
+
+function normalizeIndicator(ind: any) {
+  return {
+    ...ind,
+    parameters: Array.isArray(ind.parameters)
+      ? ind.parameters
+      : safeParse(ind.parameters) || [],
+    scoring_rules: Array.isArray(ind.scoring_rules)
+      ? ind.scoring_rules
+      : safeParse(ind.scoring_rules) || []
+  };
+}
+
 type CreateIndicatorInput = Omit<IndicatorDefinition, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'createdBy' | 'updatedBy'> & {
-  id?: string; // Make id optional for creation
+  id?: string;
   createdBy: string;
 };
 
@@ -23,7 +42,7 @@ export class IndicatorConfig {
       const db = getDB();
       const query = includeInactive 
         ? 'SELECT * FROM indicators ORDER BY category, display_order, name'
-        : 'SELECT * FROM indicators WHERE is_active = 1 ORDER BY category, display_order, name';
+        : 'SELECT * FROM indicators WHERE is_active = true ORDER BY category, display_order, name';
       
       const rows = await allAsync<any>(db, query);
       
@@ -42,7 +61,7 @@ export class IndicatorConfig {
       const db = getDB();
       const result = await getAsync<any>(
         db, 
-        'SELECT * FROM indicators WHERE id = ?', 
+        'SELECT * FROM indicators WHERE id = $1', 
         [id]
       );
       
@@ -63,7 +82,7 @@ export class IndicatorConfig {
       const db = getDB();
       const result = await getAsync<any>(
         db, 
-        'SELECT * FROM indicators WHERE code = ?', 
+        'SELECT * FROM indicators WHERE code = $1', 
         [code]
       );
       
@@ -81,15 +100,10 @@ export class IndicatorConfig {
    */
   static async getParameters(indicatorId: string): Promise<ParameterDefinition[]> {
     try {
-      const db = getDB();
-      
-      // Get the indicator first
       const indicator = await this.getById(indicatorId);
       if (!indicator) {
         throw new Error(`Indicator with ID ${indicatorId} not found`);
       }
-      
-      // Return parameters from the indicator object
       return indicator.parameters || [];
     } catch (error) {
       console.error('Error getting indicator parameters:', error);
@@ -100,70 +114,60 @@ export class IndicatorConfig {
   /**
    * Create new indicator
    */
-  static async create(
-    indicator: CreateIndicatorInput
-  ): Promise<string> {
+  static async create(indicator: CreateIndicatorInput): Promise<string> {
     try {
       const db = getDB();
       
-      // Generate ID if not provided
       const id = indicator.id || this.generateId(indicator.name);
-      
-      // Generate code from name if not provided
       const code = indicator.code || this.generateCode(indicator.name);
       
-      // Check if code already exists
       const existing = await this.getByCode(code);
       if (existing) {
         throw new Error(`Indicator with code "${code}" already exists`);
       }
       
-      // Determine display order
       const maxOrderResult = await getAsync<{ max_order: number }>(
         db,
-        'SELECT MAX(display_order) as max_order FROM indicators WHERE category = ?',
+        'SELECT MAX(display_order) as max_order FROM indicators WHERE category = $1',
         [indicator.category]
       );
       const displayOrder = (maxOrderResult?.max_order || 0) + 1;
       
-      // Convert for database
       const parameters = indicator.parameters || [];
       const scoringRules = indicator.scoringRules || [];
       
-      // Execute the insert
-await runAsync(
-  db,
-  `INSERT INTO indicators (
-    id, code, name, description, category, weight, max_score,
-    scoring_method, formula, parameters, scoring_rules, ui_config,
-    is_active, display_order, metadata, version,
-    created_by, updated_by, created_at, updated_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  [
-    id,
-    code,
-    indicator.name,
-    indicator.description || null,
-    indicator.category,
-    indicator.weight || 0,
-    indicator.maxScore || 100,
-    indicator.scoringMethod || 'sum',
-    indicator.formula || '',
-    JSON.stringify(parameters.map(p => this.prepareParameterForDb(p))),
-    JSON.stringify(scoringRules.map(r => this.prepareScoringRuleForDb(r))),
-    JSON.stringify(indicator.uiConfig || {}),
-    indicator.isActive !== false ? 1 : 0,
-    displayOrder,
-    JSON.stringify(indicator.metadata || {}),
-    1, // initial version
-    indicator.createdBy || 'system',  // FIX: Add fallback to 'system'
-    indicator.createdBy || 'system',  // FIX: Add fallback to 'system'
-    new Date().toISOString(),
-    new Date().toISOString()
-  ]
-);
+      await runAsync(
+        db,
+        `INSERT INTO indicators (
+          id, code, name, description, category, weight, max_score,
+          scoring_method, formula, parameters, scoring_rules, ui_config,
+          is_active, display_order, metadata, version,
+          created_by, updated_by, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+        [
+          id,
+          code,
+          indicator.name,
+          indicator.description || null,
+          indicator.category,
+          indicator.weight || 0,
+          indicator.maxScore || 100,
+          indicator.scoringMethod || 'sum',
+          indicator.formula || '',
+          JSON.stringify(parameters.map(p => this.prepareParameterForDb(p))),
+          JSON.stringify(scoringRules.map(r => this.prepareScoringRuleForDb(r))),
+          JSON.stringify(indicator.uiConfig || {}),
+          indicator.isActive !== false,
+          displayOrder,
+          JSON.stringify(indicator.metadata || {}),
+          1,
+          indicator.createdBy || 'system',
+          indicator.createdBy || 'system',
+          new Date().toISOString(),
+          new Date().toISOString()
+        ]
+      );
       
-      // Create history entry - FIXED: Pass action as parameter, not in object
       await this.createHistoryEntry(id, 1, 'create', indicator.createdBy, {
         ...indicator,
         id,
@@ -193,21 +197,15 @@ await runAsync(
   /**
    * Update indicator
    */
-  static async update(
-    id: string, 
-    updates: Partial<IndicatorDefinition>,
-    updatedBy: string
-  ): Promise<boolean> {
+  static async update(id: string, updates: Partial<IndicatorDefinition>, updatedBy: string): Promise<boolean> {
     try {
       const db = getDB();
       
-      // Get current indicator
       const current = await this.getById(id);
       if (!current) {
         throw new Error('Indicator not found');
       }
       
-      // Check if code is being changed and if it already exists
       if (updates.code && updates.code !== current.code) {
         const existingWithCode = await this.getByCode(updates.code);
         if (existingWithCode && existingWithCode.id !== id) {
@@ -215,18 +213,15 @@ await runAsync(
         }
       }
       
-      // Increment version
       const newVersion = current.version + 1;
-      
-      // Merge updates with current data
       const updatedIndicator = { ...current, ...updates };
       
-      // Build update query
       const updateFields: string[] = [];
       const values: any[] = [];
+      let paramIndex = 1;
       
       const addField = (field: string, value: any) => {
-        updateFields.push(`${field} = ?`);
+        updateFields.push(`${field} = $${paramIndex++}`);
         values.push(value);
       };
       
@@ -245,26 +240,22 @@ await runAsync(
         addField('scoring_rules', JSON.stringify(updates.scoringRules.map(r => this.prepareScoringRuleForDb(r))));
       }
       if (updates.uiConfig !== undefined) addField('ui_config', JSON.stringify(updates.uiConfig || {}));
-      if (updates.isActive !== undefined) addField('is_active', updates.isActive ? 1 : 0);
+      if (updates.isActive !== undefined) addField('is_active', updates.isActive === true);
       if (updates.displayOrder !== undefined) addField('display_order', updates.displayOrder);
       if (updates.metadata !== undefined) addField('metadata', JSON.stringify(updates.metadata || {}));
       
-      // Always update version, updated_by, and updated_at
       addField('version', newVersion);
       addField('updated_by', updatedBy);
       addField('updated_at', new Date().toISOString());
       
-      // Add WHERE clause value
       values.push(id);
       
-      const query = `UPDATE indicators SET ${updateFields.join(', ')} WHERE id = ?`;
+      const query = `UPDATE indicators SET ${updateFields.join(', ')} WHERE id = $${paramIndex++}`;
       
       await runAsync(db, query, values);
       
-      // Create history entry - FIXED: Pass action as parameter
       await this.createHistoryEntry(id, newVersion, 'update', updatedBy, updatedIndicator);
       
-      // Verify the update was successful
       const updated = await this.getById(id);
       return updated !== null && updated.version === newVersion;
     } catch (error) {
@@ -280,7 +271,6 @@ await runAsync(
     try {
       const db = getDB();
       
-      // Get current indicator before deleting
       const current = await this.getById(id);
       if (!current) {
         throw new Error('Indicator not found');
@@ -288,11 +278,10 @@ await runAsync(
       
       await runAsync(
         db,
-        'UPDATE indicators SET is_active = 0, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        'UPDATE indicators SET is_active = false, updated_by = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
         [deletedBy, id]
       );
       
-      // Create history entry for deletion
       await this.createHistoryEntry(id, current.version + 1, 'delete', deletedBy, {
         ...current,
         isActive: false,
@@ -300,7 +289,6 @@ await runAsync(
         updatedAt: new Date().toISOString()
       });
       
-      // Verify the deletion by checking if the indicator is now inactive
       const indicator = await this.getById(id);
       return indicator !== null && !indicator.isActive;
     } catch (error) {
@@ -315,14 +303,7 @@ await runAsync(
   static async hardDelete(id: string): Promise<boolean> {
     try {
       const db = getDB();
-      
-      await runAsync(
-        db,
-        'DELETE FROM indicators WHERE id = ?',
-        [id]
-      );
-      
-      // Verify deletion by checking if indicator no longer exists
+      await runAsync(db, 'DELETE FROM indicators WHERE id = $1', [id]);
       const indicator = await this.getById(id);
       return indicator === null;
     } catch (error) {
@@ -334,26 +315,19 @@ await runAsync(
   /**
    * Reorder indicators
    */
-  static async reorderIndicators(
-    category: IndicatorCategory,
-    orderedIds: string[]
-  ): Promise<boolean> {
+  static async reorderIndicators(category: IndicatorCategory, orderedIds: string[]): Promise<boolean> {
     try {
       const db = getDB();
-      
-      // Start transaction
-      await runAsync(db, 'BEGIN TRANSACTION');
+      await runAsync(db, 'BEGIN');
       
       try {
-        // Update display order for each indicator
         for (let i = 0; i < orderedIds.length; i++) {
           await runAsync(
             db,
-            'UPDATE indicators SET display_order = ? WHERE id = ? AND category = ?',
+            'UPDATE indicators SET display_order = $1 WHERE id = $2 AND category = $3',
             [i + 1, orderedIds[i], category]
           );
         }
-        
         await runAsync(db, 'COMMIT');
         return true;
       } catch (error) {
@@ -373,11 +347,10 @@ await runAsync(
     try {
       const db = getDB();
       const query = includeInactive 
-        ? 'SELECT * FROM indicators WHERE category = ? ORDER BY display_order, name'
-        : 'SELECT * FROM indicators WHERE category = ? AND is_active = 1 ORDER BY display_order, name';
+        ? 'SELECT * FROM indicators WHERE category = $1 ORDER BY display_order, name'
+        : 'SELECT * FROM indicators WHERE category = $1 AND is_active = true ORDER BY display_order, name';
       
       const rows = await allAsync<any>(db, query, [category]);
-      
       return rows.map((row: any) => this.mapRowToIndicator(row));
     } catch (error) {
       console.error('Error getting indicators by category:', error);
@@ -386,17 +359,15 @@ await runAsync(
   }
 
   /**
-   * Get all active indicators with their parameters and scoring rules
+   * Get all active indicators
    */
   static async getCompleteConfiguration(): Promise<IndicatorDefinition[]> {
     try {
       const db = getDB();
-      
       const rows = await allAsync<any>(
         db,
-        'SELECT * FROM indicators WHERE is_active = 1 ORDER BY category, display_order, name'
+        'SELECT * FROM indicators WHERE is_active = true ORDER BY category, display_order, name'
       );
-      
       return rows.map((row: any) => this.mapRowToIndicator(row));
     } catch (error) {
       console.error('Error getting complete configuration:', error);
@@ -411,14 +382,12 @@ await runAsync(
     try {
       const db = getDB();
       
-      // First, get the active configuration version
       const activeVersion = await getAsync<any>(
         db,
-        'SELECT * FROM configuration_versions WHERE is_active = 1 LIMIT 1'
+        'SELECT * FROM configuration_versions WHERE is_active = true LIMIT 1'
       );
       
       if (activeVersion) {
-        // Parse JSON fields
         return {
           ...activeVersion,
           indicators: activeVersion.indicators ? JSON.parse(activeVersion.indicators) : [],
@@ -428,33 +397,28 @@ await runAsync(
         };
       }
       
-      // If no active version exists, return current live configuration
       const indicators = await this.getCompleteConfiguration();
       const allParameters: ParameterDefinition[] = [];
       
-      // Get all parameters for all indicators
       for (const indicator of indicators) {
         if (indicator.parameters && indicator.parameters.length > 0) {
           allParameters.push(...indicator.parameters);
         }
       }
       
-      // Get all scoring rules
       const scoringRules = await allAsync<any>(
         db,
-        'SELECT * FROM scoring_rules WHERE is_active = 1'
+        'SELECT * FROM scoring_rules WHERE is_active = true'
       );
       
-      // Get all extended scoring rules
       const extendedScoringRules = await allAsync<any>(
         db,
-        'SELECT * FROM extended_scoring_rules WHERE is_active = 1'
+        'SELECT * FROM extended_scoring_rules WHERE is_active = true'
       );
       
-      // Get all form templates
       const formTemplates = await allAsync<any>(
         db,
-        'SELECT * FROM form_templates WHERE is_active = 1'
+        'SELECT * FROM form_templates WHERE is_active = true'
       );
       
       return {
@@ -474,56 +438,61 @@ await runAsync(
   }
 
   /**
-   * Create a configuration version snapshot
-   */
-  static async createConfigurationVersion(versionData: any): Promise<number> {
-    try {
-      const db = getDB();
-      
-      // Check if version number already exists
-      const existingVersion = await getAsync<any>(
-        db,
-        'SELECT id FROM configuration_versions WHERE version_number = ?',
-        [versionData.version_number]
-      );
-      
-      if (existingVersion) {
-        throw new Error(`Version ${versionData.version_number} already exists`);
-      }
-      
-      await runAsync(
-        db,
-        `INSERT INTO configuration_versions (
-          version_name, version_number, description,
-          indicators, parameters, scoring_rules, form_templates,
-          is_active, created_by, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-        [
-          versionData.version_name,
-          versionData.version_number,
-          versionData.description || '',
-          JSON.stringify(versionData.indicators),
-          JSON.stringify(versionData.parameters),
-          JSON.stringify(versionData.scoring_rules),
-          JSON.stringify(versionData.form_templates),
-          versionData.is_active ? 1 : 0,
-          versionData.created_by
-        ]
-      );
-      
-      // Get the inserted ID
-      const insertedVersion = await getAsync<{ id: number }>(
-        db,
-        'SELECT id FROM configuration_versions WHERE version_number = ? ORDER BY created_at DESC LIMIT 1',
-        [versionData.version_number]
-      );
-      
-      return insertedVersion?.id || 0;
-    } catch (error) {
-      console.error('Error creating configuration version:', error);
-      throw error;
+ * Create a configuration version snapshot
+ */
+static async createConfigurationVersion(versionData: any): Promise<number> {
+  try {
+    const db = getDB();
+    
+    // Check if version number already exists
+    const existingVersion = await getAsync<any>(
+      db,
+      'SELECT id FROM configuration_versions WHERE version_number = $1',
+      [versionData.version_number]
+    );
+    
+    if (existingVersion) {
+      throw new Error(`Version ${versionData.version_number} already exists`);
     }
+    
+    // Insert the new version
+    await runAsync(
+      db,
+      `INSERT INTO configuration_versions (
+        version_name, version_number, description,
+        indicators, parameters, scoring_rules, form_templates,
+        is_active, created_by, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)`,
+      [
+        versionData.version_name,
+        versionData.version_number,
+        versionData.description || '',
+        JSON.stringify(versionData.indicators || []),
+        JSON.stringify(versionData.parameters || []),
+        JSON.stringify(versionData.scoring_rules || []),
+        JSON.stringify(versionData.form_templates || []),
+        versionData.is_active === true,
+        versionData.created_by || 'system'
+      ]
+    );
+    
+    // Get the newly created version ID
+    const newVersion = await getAsync<{ id: number }>(
+      db,
+      'SELECT id FROM configuration_versions WHERE version_number = $1 ORDER BY created_at DESC LIMIT 1',
+      [versionData.version_number]
+    );
+    
+    if (!newVersion || !newVersion.id) {
+      throw new Error('Failed to get created version ID');
+    }
+    
+    return newVersion.id;
+  } catch (error) {
+    console.error('Error creating configuration version:', error);
+    throw error;
   }
+}
 
   /**
    * Apply a configuration version
@@ -532,14 +501,12 @@ await runAsync(
     try {
       const db = getDB();
       
-      // Start transaction
-      await runAsync(db, 'BEGIN TRANSACTION');
+      await runAsync(db, 'BEGIN');
       
       try {
-        // Get the version data
         const version = await getAsync<any>(
           db,
-          'SELECT * FROM configuration_versions WHERE id = ?',
+          'SELECT * FROM configuration_versions WHERE id = $1',
           [versionId]
         );
         
@@ -547,36 +514,27 @@ await runAsync(
           throw new Error('Configuration version not found');
         }
         
-        // Parse the version data
         const indicators = version.indicators ? JSON.parse(version.indicators) : [];
-        const parameters = version.parameters ? JSON.parse(version.parameters) : [];
-        const scoringRules = version.scoring_rules ? JSON.parse(version.scoring_rules) : [];
         const formTemplates = version.form_templates ? JSON.parse(version.form_templates) : [];
         
-        // Deactivate all current configuration versions
         await runAsync(
           db,
-          'UPDATE configuration_versions SET is_active = 0, applied_at = NULL'
+          'UPDATE configuration_versions SET is_active = false, applied_at = NULL'
         );
         
-        // Apply the selected version
         await runAsync(
           db,
-          'UPDATE configuration_versions SET is_active = 1, applied_at = datetime("now"), applied_by = ? WHERE id = ?',
+          'UPDATE configuration_versions SET is_active = true, applied_at = CURRENT_TIMESTAMP, applied_by = $1 WHERE id = $2',
           [appliedBy, versionId]
         );
         
-        // Apply indicators
         for (const indicator of indicators) {
-          // Check if indicator exists
           const existingIndicator = await this.getById(indicator.id);
           
           if (existingIndicator) {
-            // Update existing indicator
             await this.update(indicator.id, indicator, appliedBy);
           } else {
-            // Create new indicator - ensure we have all required fields
-            const createData: CreateIndicatorInput = {
+            const createData: any = {
               ...indicator,
               createdBy: appliedBy
             };
@@ -584,45 +542,44 @@ await runAsync(
           }
         }
         
-        // Apply form templates (simplified - update existing or create new)
         for (const template of formTemplates) {
           const existingTemplate = await getAsync<any>(
             db,
-            'SELECT id FROM form_templates WHERE code = ?',
-            [template.code]
+            'SELECT id FROM form_templates WHERE id = $1',
+            [template.id]
           );
           
           if (existingTemplate) {
             await runAsync(
               db,
               `UPDATE form_templates SET 
-                name = ?, description = ?, sections = ?, ui_config = ?,
-                is_active = ?, updated_by = ?, updated_at = datetime('now')
-               WHERE id = ?`,
+                name = $1, description = $2, sections = $3, ui_config = $4,
+                is_active = $5, updated_by = $6, updated_at = CURRENT_TIMESTAMP
+               WHERE id = $7`,
               [
                 template.name,
                 template.description || '',
                 JSON.stringify(template.sections || []),
                 JSON.stringify(template.ui_config || {}),
-                template.is_active ? 1 : 0,
+                template.is_active === true,
                 appliedBy,
-                existingTemplate.id
+                template.id
               ]
             );
           } else {
             await runAsync(
               db,
               `INSERT INTO form_templates (
-                code, name, description, sections, ui_config,
+                id, name, description, sections, ui_config,
                 is_active, created_by, updated_by, created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
               [
-                template.code,
+                template.id || `tpl_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 template.name,
                 template.description || '',
                 JSON.stringify(template.sections || []),
                 JSON.stringify(template.ui_config || {}),
-                template.is_active ? 1 : 0,
+                template.is_active === true,
                 appliedBy,
                 appliedBy
               ]
@@ -643,81 +600,7 @@ await runAsync(
   }
 
   /**
-   * Get indicator statistics
-   */
-  static async getStatistics(): Promise<{
-    total: number;
-    byCategory: Record<string, number>;
-    active: number;
-    inactive: number;
-  }> {
-    try {
-      const db = getDB();
-      
-      // Total count
-      const totalResult = await getAsync<{ count: number }>(
-        db,
-        'SELECT COUNT(*) as count FROM indicators'
-      );
-      
-      // Active count
-      const activeResult = await getAsync<{ count: number }>(
-        db,
-        'SELECT COUNT(*) as count FROM indicators WHERE is_active = 1'
-      );
-      
-      // Count by category
-const categoryResult = await allAsync<{ category: string; count: number }>(
-  db,
-  'SELECT category, COUNT(*) as count FROM indicators WHERE is_active = 1 GROUP BY category',
-  []
-);
-
-const byCategory: Record<string, number> = {};
-// Ensure categoryResult is an array before using forEach
-const categories = Array.isArray(categoryResult) ? categoryResult : [];
-categories.forEach(row => {
-  byCategory[row.category] = row.count;
-});
-
-return {
-  total: totalResult?.count || 0,
-  byCategory,
-  active: activeResult?.count || 0,
-  inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
-};
-    } catch (error) {
-      console.error('Error getting indicator statistics:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get indicator history
-   */
-  static async getHistory(indicatorId: string): Promise<any[]> {
-    try {
-      const db = getDB();
-      
-      const rows = await allAsync<any>(
-        db,
-        'SELECT * FROM indicators_history WHERE indicator_id = ? ORDER BY version DESC',
-        [indicatorId]
-      );
-      
-      // Parse JSON snapshot field
-      return rows.map(row => ({
-        ...row,
-        snapshot: row.snapshot ? JSON.parse(row.snapshot) : {}
-      }));
-    } catch (error) {
-      console.error('Error getting indicator history:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get configuration versions (all)
+   * Get all configuration versions
    */
   static async getConfigurationVersions(): Promise<any[]> {
     try {
@@ -728,9 +611,16 @@ return {
         'SELECT * FROM configuration_versions ORDER BY created_at DESC'
       );
       
-      // Parse JSON fields
       return rows.map((row: any) => ({
-        ...row,
+        id: row.id,
+        versionName: row.version_name,
+        versionNumber: row.version_number,
+        description: row.description,
+        isActive: row.is_active === true,
+        createdAt: row.created_at,
+        appliedAt: row.applied_at,
+        createdBy: row.created_by,
+        appliedBy: row.applied_by,
         indicators: row.indicators ? JSON.parse(row.indicators) : [],
         parameters: row.parameters ? JSON.parse(row.parameters) : [],
         scoring_rules: row.scoring_rules ? JSON.parse(row.scoring_rules) : [],
@@ -738,7 +628,7 @@ return {
       }));
     } catch (error) {
       console.error('Error getting configuration versions:', error);
-      throw error;
+      return [];
     }
   }
 
@@ -751,7 +641,7 @@ return {
       
       const row = await getAsync<any>(
         db,
-        'SELECT * FROM configuration_versions WHERE id = ?',
+        'SELECT * FROM configuration_versions WHERE id = $1',
         [id]
       );
       
@@ -759,9 +649,16 @@ return {
         return null;
       }
       
-      // Parse JSON fields
       return {
-        ...row,
+        id: row.id,
+        versionName: row.version_name,
+        versionNumber: row.version_number,
+        description: row.description,
+        isActive: row.is_active === true,
+        createdAt: row.created_at,
+        appliedAt: row.applied_at,
+        createdBy: row.created_by,
+        appliedBy: row.applied_by,
         indicators: row.indicators ? JSON.parse(row.indicators) : [],
         parameters: row.parameters ? JSON.parse(row.parameters) : [],
         scoring_rules: row.scoring_rules ? JSON.parse(row.scoring_rules) : [],
@@ -769,6 +666,75 @@ return {
       };
     } catch (error) {
       console.error('Error getting configuration version by ID:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get indicator statistics
+   */
+  static async getStatistics(): Promise<{
+    total: number;
+    byCategory: Record<string, number>;
+    active: number;
+    inactive: number;
+  }> {
+    try {
+      const db = getDB();
+      
+      const totalResult = await getAsync<{ count: string }>(
+        db,
+        'SELECT COUNT(*) as count FROM indicators'
+      );
+      
+      const activeResult = await getAsync<{ count: string }>(
+        db,
+        'SELECT COUNT(*) as count FROM indicators WHERE is_active = true'
+      );
+      
+      const categoryResult = await allAsync<{ category: string; count: string }>(
+        db,
+        'SELECT category, COUNT(*) as count FROM indicators WHERE is_active = true GROUP BY category'
+      );
+      
+      const byCategory: Record<string, number> = {};
+      const categories = Array.isArray(categoryResult) ? categoryResult : [];
+      categories.forEach(row => {
+        byCategory[row.category] = parseInt(row.count, 10);
+      });
+      
+      const total = parseInt(totalResult?.count || '0', 10);
+      const active = parseInt(activeResult?.count || '0', 10);
+      
+      return {
+        total,
+        byCategory,
+        active,
+        inactive: total - active
+      };
+    } catch (error) {
+      console.error('Error getting indicator statistics:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get indicator history
+   */
+  static async getHistory(indicatorId: string): Promise<any[]> {
+    try {
+      const db = getDB();
+      const rows = await allAsync<any>(
+        db,
+        'SELECT * FROM indicators_history WHERE indicator_id = $1 ORDER BY version DESC',
+        [indicatorId]
+      );
+      return rows.map(row => ({
+        ...row,
+        snapshot: row.snapshot ? JSON.parse(row.snapshot) : {}
+      }));
+    } catch (error) {
+      console.error('Error getting indicator history:', error);
       throw error;
     }
   }
@@ -784,10 +750,9 @@ return {
     try {
       const db = getDB();
       
-      // Get the historical version
       const historyRow = await getAsync<any>(
         db,
-        'SELECT snapshot FROM indicators_history WHERE indicator_id = ? AND version = ?',
+        'SELECT snapshot FROM indicators_history WHERE indicator_id = $1 AND version = $2',
         [indicatorId, version]
       );
       
@@ -797,7 +762,11 @@ return {
       
       const historicalData = JSON.parse(historyRow.snapshot);
       
-      // Update current indicator with historical data
+      delete historicalData.id;
+      delete historicalData.createdAt;
+      delete historicalData.createdBy;
+      delete historicalData.version;
+      
       return await this.update(indicatorId, historicalData, restoredBy);
     } catch (error) {
       console.error('Error restoring indicator version:', error);
@@ -816,7 +785,6 @@ return {
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // Basic validation
     if (!indicator.name?.trim()) {
       errors.push('Indicator name is required');
     } else if (indicator.name.length < 2) {
@@ -843,7 +811,6 @@ return {
       }
     }
 
-    // Validate parameters
     if (indicator.parameters && Array.isArray(indicator.parameters)) {
       indicator.parameters.forEach((param, index) => {
         if (!param.code?.trim()) {
@@ -855,32 +822,6 @@ return {
         if (!param.type) {
           errors.push(`Parameter ${index + 1}: Type is required`);
         }
-        
-        // Type-specific validation
-        if (param.type === 'select' && (!param.options || param.options.length === 0)) {
-          errors.push(`Parameter ${index + 1}: Select type requires options`);
-        }
-        
-        if (param.type === 'number') {
-          if (param.validation?.min !== undefined && param.validation?.max !== undefined && param.validation.min > param.validation.max) {
-            errors.push(`Parameter ${index + 1}: Min value cannot be greater than max value`);
-          }
-        }
-      });
-    }
-
-    // Validate scoring rules
-    if (indicator.scoringRules && Array.isArray(indicator.scoringRules)) {
-      indicator.scoringRules.forEach((rule, index) => {
-        if (!rule.condition?.trim()) {
-          errors.push(`Scoring rule ${index + 1}: Condition is required`);
-        }
-        if (rule.points === undefined || typeof rule.points !== 'number') {
-          errors.push(`Scoring rule ${index + 1}: Points must be a number`);
-        }
-        if (rule.minValue !== undefined && rule.maxValue !== undefined && rule.minValue > rule.maxValue) {
-          errors.push(`Scoring rule ${index + 1}: Min value cannot be greater than max value`);
-        }
       });
     }
 
@@ -891,66 +832,50 @@ return {
     };
   }
 
-    /**
-   * Map database row to IndicatorDefinition - DEBUG VERSION
+  /**
+   * Map database row to IndicatorDefinition
    */
   private static mapRowToIndicator(row: any): IndicatorDefinition {
-    // DEBUG: Log raw data
-    console.log('=== DEBUG mapRowToIndicator ===');
-    console.log('Indicator ID:', row.id);
-    console.log('Indicator Name:', row.name);
-    console.log('Raw parameters field type:', typeof row.parameters);
-    console.log('Raw parameters value:', row.parameters);
-    
-    // Parse JSON fields from database
     let parameters: ParameterDefinition[] = [];
     try {
-      if (row.parameters && row.parameters.trim() !== '' && row.parameters !== '[]') {
-        console.log('Attempting to parse parameters JSON...');
-        const parsed = JSON.parse(row.parameters);
-        console.log('Successfully parsed. Type:', typeof parsed);
-        console.log('Parsed value:', parsed);
-        console.log('Is array?', Array.isArray(parsed));
-        
-        if (Array.isArray(parsed)) {
-          console.log('Array length:', parsed.length);
-          if (parsed.length > 0) {
-            console.log('First item in array:', parsed[0]);
-            // Test mapParameter on first item
-            const testMapped = this.mapParameter(parsed[0]);
-            console.log('First item after mapParameter:', testMapped);
-          }
-          
-          parameters = parsed.map((p: any) => this.mapParameter(p));
-        } else {
-          console.warn('Parsed parameters is not an array:', parsed);
-          parameters = [];
-        }
-      } else {
-        console.log('No parameters or empty parameters field');
-        if (row.parameters === null || row.parameters === undefined) {
-          console.log('parameters field is null/undefined');
-        } else if (row.parameters === '[]') {
-          console.log('parameters field is empty array string');
-        }
+      if (row.parameters) {
+        const parsed = typeof row.parameters === 'string' ? JSON.parse(row.parameters) : row.parameters;
+        parameters = Array.isArray(parsed) ? parsed.map((p: any) => this.mapParameter(p)) : [];
       }
     } catch (error: any) {
-      console.error('ERROR parsing parameters:', error);
-      console.error('Error stack:', error.stack);
-      console.error('Problematic JSON string:', row.parameters);
+      console.error(`Error parsing parameters for indicator ${row.id}:`, error.message);
       parameters = [];
     }
     
-    console.log('Final mapped parameters array length:', parameters.length);
-    console.log('Final mapped parameters:', parameters);
-    console.log('=== END DEBUG ===\n');
+    let scoringRulesArray: any[] = [];
+    try {
+      if (row.scoring_rules) {
+        const parsed = typeof row.scoring_rules === 'string' ? JSON.parse(row.scoring_rules) : row.scoring_rules;
+        scoringRulesArray = Array.isArray(parsed) ? parsed : [];
+      }
+    } catch (error: any) {
+      console.error(`Error parsing scoring_rules for indicator ${row.id}:`, error.message);
+      scoringRulesArray = [];
+    }
     
-    // Parse other JSON fields
-    const scoringRules = row.scoring_rules ? JSON.parse(row.scoring_rules) : [];
-    const metadata = row.metadata ? JSON.parse(row.metadata) : {};
-    const uiConfig = row.ui_config ? JSON.parse(row.ui_config) : {};
+    let metadata = {};
+    try {
+      if (row.metadata) {
+        metadata = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata;
+      }
+    } catch (error: any) {
+      metadata = {};
+    }
     
-    // Convert database snake_case to TypeScript camelCase
+    let uiConfig = {};
+    try {
+      if (row.ui_config) {
+        uiConfig = typeof row.ui_config === 'string' ? JSON.parse(row.ui_config) : row.ui_config;
+      }
+    } catch (error: any) {
+      uiConfig = {};
+    }
+    
     return {
       id: row.id,
       code: row.code,
@@ -962,9 +887,9 @@ return {
       scoringMethod: row.scoring_method as 'sum' | 'average' | 'weighted' | 'formula' | 'conditional',
       formula: row.formula || '',
       parameters: parameters,
-      scoringRules: scoringRules.map((r: any) => this.mapScoringRule(r)),
+      scoringRules: scoringRulesArray.map((r: any) => this.mapScoringRule(r)),
       uiConfig: uiConfig,
-      isActive: row.is_active === 1,
+      isActive: row.is_active === true,
       displayOrder: row.display_order,
       metadata: metadata,
       version: row.version,
@@ -975,67 +900,51 @@ return {
     };
   }
 
-  /**
-   * Map parameter from database to ParameterDefinition
-   * FIXED: Now handles both old format (with name field) and new format (with label field)
-   */
   private static mapParameter(param: any): ParameterDefinition {
-  // Handle backward compatibility: if label doesn't exist, use name or code
-  const label = param.label || param.name || param.code || 'Unnamed Parameter';
-  
-  // Handle scoring_rules field that might be in the parameter (old format)
-  // Remove it since scoring rules are separate from parameters
-  const { scoring_rules, ...cleanParam } = param;
-  
-  // Extract calculation config from either snake_case or camelCase
-  let calculationConfig = cleanParam.calculation_config || cleanParam.calculationConfig;
-  
-  // If calculationConfig exists but is a string (JSON), parse it
-  if (calculationConfig && typeof calculationConfig === 'string') {
-    try {
-      calculationConfig = JSON.parse(calculationConfig);
-    } catch (e) {
-      console.error('Error parsing calculationConfig JSON:', e);
-      calculationConfig = undefined;
+    const label = param.label || param.name || param.code || 'Unnamed Parameter';
+    const { scoring_rules, ...cleanParam } = param;
+    
+    let calculationConfig = cleanParam.calculation_config || cleanParam.calculationConfig;
+    if (calculationConfig && typeof calculationConfig === 'string') {
+      try {
+        calculationConfig = JSON.parse(calculationConfig);
+      } catch (e) {
+        calculationConfig = undefined;
+      }
     }
-  }
-  
-  // If no calculationConfig, don't include it (it's optional in ParameterDefinition)
-  // Otherwise, ensure it has the minimum required structure
-  let finalCalculationConfig;
-  if (calculationConfig) {
-    finalCalculationConfig = {
-      calculationType: calculationConfig.calculationType || 'manual',
-      autoCalculate: calculationConfig.autoCalculate !== false,
-      allowManualOverride: calculationConfig.allowManualOverride || false,
-      showCalculation: calculationConfig.showCalculation || false,
-      calculationDetails: calculationConfig.calculationDetails,
-      validationRules: calculationConfig.validationRules
+    
+    let finalCalculationConfig;
+    if (calculationConfig) {
+      finalCalculationConfig = {
+        calculationType: calculationConfig.calculationType || 'manual',
+        autoCalculate: calculationConfig.autoCalculate !== false,
+        allowManualOverride: calculationConfig.allowManualOverride || false,
+        showCalculation: calculationConfig.showCalculation || false,
+        calculationDetails: calculationConfig.calculationDetails,
+        validationRules: calculationConfig.validationRules
+      };
+    }
+    
+    return {
+      id: cleanParam.id || cleanParam.code || `param_${Date.now()}`,
+      code: cleanParam.code || cleanParam.id || 'unnamed',
+      label: label,
+      type: (cleanParam.type || 'text') as any,
+      description: cleanParam.description || '',
+      required: cleanParam.required !== false,
+      defaultValue: cleanParam.default_value || cleanParam.defaultValue,
+      options: cleanParam.options || [],
+      validation: cleanParam.validation || {},
+      uiSettings: cleanParam.ui_settings || cleanParam.uiSettings || {},
+      calculationConfig: finalCalculationConfig,
+      scoringRuleIds: cleanParam.scoring_rule_ids || cleanParam.scoringRuleIds || [],
+      dependencies: cleanParam.dependencies || [],
+      displayOrder: cleanParam.display_order || cleanParam.displayOrder || 0,
+      isActive: cleanParam.is_active !== false,
+      metadata: cleanParam.metadata || {}
     };
   }
-  
-  return {
-    id: cleanParam.id || cleanParam.code || `param_${Date.now()}`,
-    code: cleanParam.code || cleanParam.id || 'unnamed',
-    label: label,
-    type: (cleanParam.type || 'text') as any,
-    description: cleanParam.description || '',
-    required: cleanParam.required !== false,
-    defaultValue: cleanParam.default_value || cleanParam.defaultValue,
-    options: cleanParam.options || [],
-    validation: cleanParam.validation || {},
-    uiSettings: cleanParam.ui_settings || cleanParam.uiSettings || {},
-    calculationConfig: finalCalculationConfig, // Now properly structured or undefined
-    scoringRuleIds: cleanParam.scoring_rule_ids || cleanParam.scoringRuleIds || [],
-    dependencies: cleanParam.dependencies || [],
-    displayOrder: cleanParam.display_order || cleanParam.displayOrder || 0,
-    isActive: cleanParam.is_active !== false,
-    metadata: cleanParam.metadata || {}
-  };
-}
-  /**
-   * Map scoring rule from database to ScoringRule
-   */
+
   private static mapScoringRule(rule: any): ScoringRule {
     return {
       id: rule.id,
@@ -1050,48 +959,36 @@ return {
     };
   }
 
-  /**
- * Prepare parameter for database (camelCase to snake_case)
- * FIXED: Now handles conversion properly
- */
-private static prepareParameterForDb(param: ParameterDefinition): any {
-  // Ensure required fields
-  const dbParam: any = {
-    id: param.id || param.code || `param_${Date.now()}`,
-    code: param.code || 'unnamed',
-    label: param.label || param.code || 'Unnamed Parameter',
-    type: param.type || 'text',
-    description: param.description || '',
-    required: param.required !== false,
-    default_value: param.defaultValue,
-    options: param.options || [],
-    validation: param.validation || {},
-    ui_settings: param.uiSettings || {},
-    display_order: param.displayOrder || 0,
-    is_active: param.isActive !== false,
-    metadata: param.metadata || {}
-  };
-  
-  // Only include calculation_config if it exists and has content
-  if (param.calculationConfig) {
-    dbParam.calculation_config = param.calculationConfig;
+  private static prepareParameterForDb(param: ParameterDefinition): any {
+    const dbParam: any = {
+      id: param.id || param.code || `param_${Date.now()}`,
+      code: param.code || 'unnamed',
+      label: param.label || param.code || 'Unnamed Parameter',
+      type: param.type || 'text',
+      description: param.description || '',
+      required: param.required !== false,
+      default_value: param.defaultValue,
+      options: param.options || [],
+      validation: param.validation || {},
+      ui_settings: param.uiSettings || {},
+      display_order: param.displayOrder || 0,
+      is_active: param.isActive !== false,
+      metadata: param.metadata || {}
+    };
+    
+    if (param.calculationConfig) {
+      dbParam.calculation_config = param.calculationConfig;
+    }
+    if (param.scoringRuleIds && param.scoringRuleIds.length > 0) {
+      dbParam.scoring_rule_ids = param.scoringRuleIds;
+    }
+    if (param.dependencies && param.dependencies.length > 0) {
+      dbParam.dependencies = param.dependencies;
+    }
+    
+    return dbParam;
   }
-  
-  // Include scoring rule IDs if they exist
-  if (param.scoringRuleIds && param.scoringRuleIds.length > 0) {
-    dbParam.scoring_rule_ids = param.scoringRuleIds;
-  }
-  
-  // Include dependencies if they exist
-  if (param.dependencies && param.dependencies.length > 0) {
-    dbParam.dependencies = param.dependencies;
-  }
-  
-  return dbParam;
-}
-  /**
-   * Prepare scoring rule for database (camelCase to snake_case)
-   */
+
   private static prepareScoringRuleForDb(rule: ScoringRule): any {
     return {
       id: rule.id,
@@ -1106,16 +1003,10 @@ private static prepareParameterForDb(param: ParameterDefinition): any {
     };
   }
 
-  /**
-   * Generate ID from name
-   */
   private static generateId(name: string): string {
     return `ind_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  /**
-   * Generate code from name
-   */
   private static generateCode(name: string): string {
     return name
       .toLowerCase()
@@ -1124,27 +1015,22 @@ private static prepareParameterForDb(param: ParameterDefinition): any {
       .substring(0, 50);
   }
 
-  /**
-   * Create history entry - FIXED VERSION
-   */
   private static async createHistoryEntry(
     indicatorId: string,
     version: number,
-    action: string,  // 'create', 'update', 'delete', 'activate', 'deactivate'
+    action: string,
     changedBy: string,
     snapshot: any
   ): Promise<void> {
     try {
       const db = getDB();
-      
-      // Ensure action is lowercase to match database constraint
       const lowercaseAction = action.toLowerCase();
       
       await runAsync(
         db,
         `INSERT INTO indicators_history (
           indicator_id, version, action, changed_by, snapshot, changed_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           indicatorId,
           version,

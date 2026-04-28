@@ -15,9 +15,10 @@ export const getHoaSubmissions = async (req: Request, res: Response) => {
     }
 
     // Get agency ID for HoA user
+    // FIXED: Changed ? to $1
     const userRow = await getAsync<{ agency_id: string }>(
       db, 
-      'SELECT agency_id FROM users WHERE id = ?', 
+      'SELECT agency_id FROM users WHERE id = $1', 
       [userId]
     );
 
@@ -29,7 +30,9 @@ export const getHoaSubmissions = async (req: Request, res: Response) => {
     const fiscalYear = '2024–25';
 
     // Get submissions needing HoA action
-    const submissions = await allAsync<any[]>(db, 
+    // FIXED: Changed ? to $1, $2 and generic type
+    const submissions = await allAsync<any>(
+      db, 
       `SELECT 
         a.id as assessment_id,
         a.status,
@@ -41,17 +44,19 @@ export const getHoaSubmissions = async (req: Request, res: Response) => {
         a.updated_at
        FROM assessments a
        LEFT JOIN users u ON a.assigned_officer_id = u.id
-       WHERE a.agency_id = ? 
-         AND a.fiscal_year = ?
+       WHERE a.agency_id = $1 
+         AND a.fiscal_year = $2
          AND a.status IN ('SUBMITTED_TO_AGENCY', 'AWAITING_VALIDATION')
        ORDER BY a.updated_at DESC`,
       [agencyId, fiscalYear]
     );
 
     // Get indicator responses for each submission from dynamic_assessment_responses
+    // FIXED: Changed ? to $1 and generic type
     const submissionsWithIndicators = await Promise.all(
       submissions.map(async (submission) => {
-        const indicators = await allAsync<any[]>(db, 
+        const indicators = await allAsync<any>(
+          db, 
           `SELECT 
             indicator_id,
             response_data,
@@ -59,16 +64,17 @@ export const getHoaSubmissions = async (req: Request, res: Response) => {
             evidence_files,
             comments
            FROM dynamic_assessment_responses 
-           WHERE assessment_id = ? 
+           WHERE assessment_id = $1 
            ORDER BY indicator_id`,
           [submission.assessment_id]
         );
 
         return {
           ...submission,
-          indicators: indicators.map(ind => ({
+          indicators: indicators.map((ind: any) => ({
             ...ind,
-            response_data: ind.response_data ? JSON.parse(ind.response_data) : {}
+            response_data: ind.response_data ? 
+              (typeof ind.response_data === 'string' ? JSON.parse(ind.response_data) : ind.response_data) : {}
           }))
         };
       })
@@ -97,12 +103,13 @@ export const approveSubmission = async (req: Request, res: Response) => {
     }
 
     // Verify user is HoA for this assessment
+    // FIXED: Changed ? to $1, $2, $3
     const assessment = await getAsync<any>(
       db, 
       `SELECT a.id, a.agency_id, a.status 
        FROM assessments a
        JOIN users u ON a.agency_id = u.agency_id
-       WHERE a.id = ? AND u.id = ? AND u.role = 'agency_head'`,
+       WHERE a.id = $1 AND u.id = $2 AND u.role = 'agency_head'`,
       [assessmentId, userId]
     );
 
@@ -116,10 +123,11 @@ export const approveSubmission = async (req: Request, res: Response) => {
     }
 
     // Update assessment status to AWAITING_VALIDATION
+    // FIXED: Changed ? to $1, $2
     await runAsync(db, 
       `UPDATE assessments 
-       SET status = 'AWAITING_VALIDATION', officer_remarks = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       SET status = 'AWAITING_VALIDATION', officer_remarks = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
       [`Approved by HoA: ${userId}`, assessmentId]
     );
 
@@ -144,12 +152,13 @@ export const returnSubmission = async (req: Request, res: Response) => {
     }
 
     // Verify user is HoA for this assessment
+    // FIXED: Changed ? to $1, $2, $3
     const assessment = await getAsync<any>(
       db, 
       `SELECT a.id, a.agency_id, a.status 
        FROM assessments a
        JOIN users u ON a.agency_id = u.agency_id
-       WHERE a.id = ? AND u.id = ? AND u.role = 'agency_head'`,
+       WHERE a.id = $1 AND u.id = $2 AND u.role = 'agency_head'`,
       [assessmentId, userId]
     );
 
@@ -163,10 +172,11 @@ export const returnSubmission = async (req: Request, res: Response) => {
     }
 
     // Update assessment status to DRAFT with remarks
+    // FIXED: Changed ? to $1, $2
     await runAsync(db, 
       `UPDATE assessments 
-       SET status = 'DRAFT', officer_remarks = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       SET status = 'DRAFT', officer_remarks = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
       [`Returned by HoA: ${remarks}`, assessmentId]
     );
 
@@ -191,12 +201,13 @@ export const validateFinalScore = async (req: Request, res: Response) => {
     }
 
     // Verify user is HoA for this assessment
+    // FIXED: Changed ? to $1, $2, $3
     const assessment = await getAsync<any>(
       db, 
       `SELECT a.id, a.agency_id, a.status 
        FROM assessments a
        JOIN users u ON a.agency_id = u.agency_id
-       WHERE a.id = ? AND u.id = ? AND u.role = 'agency_head'`,
+       WHERE a.id = $1 AND u.id = $2 AND u.role = 'agency_head'`,
       [assessmentId, userId]
     );
 
@@ -210,10 +221,11 @@ export const validateFinalScore = async (req: Request, res: Response) => {
     }
 
     // Update assessment status to FINALIZED
+    // FIXED: Changed ? to $1, $2
     await runAsync(db, 
       `UPDATE assessments 
-       SET status = 'FINALIZED', validated_by = ?, validated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       SET status = 'FINALIZED', validated_by = $1, validated_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
       [userId, assessmentId]
     );
 
@@ -237,9 +249,10 @@ export const getHoaStatus = async (req: Request, res: Response) => {
     }
 
     // Get agency ID for HoA user
+    // FIXED: Changed ? to $1
     const userRow = await getAsync<{ agency_id: string }>(
       db, 
-      'SELECT agency_id FROM users WHERE id = ?', 
+      'SELECT agency_id FROM users WHERE id = $1', 
       [userId]
     );
 
@@ -251,11 +264,12 @@ export const getHoaStatus = async (req: Request, res: Response) => {
     const fiscalYear = '2024–25';
 
     // Get current assessment status
+    // FIXED: Changed ? to $1, $2
     const assessment = await getAsync<any>(
       db, 
       `SELECT id, status, overall_score, created_at, updated_at 
        FROM assessments 
-       WHERE agency_id = ? AND fiscal_year = ?`,
+       WHERE agency_id = $1 AND fiscal_year = $2`,
       [agencyId, fiscalYear]
     );
 

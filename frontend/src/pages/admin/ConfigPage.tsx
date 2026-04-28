@@ -19,14 +19,9 @@ import {
   TableCellsIcon,
   VariableIcon,
   ScaleIcon
-  //AcademicCapIcon,
-  //GiftIcon,
-  //LightBulbIcon,
-  //ShieldExclamationIcon
 } from '@heroicons/react/24/outline';
 import IndicatorManager from '../../components/config/IndicatorManager';
 import ParameterEditor from '../../components/config/ParameterEditor';
-
 import FormBuilder from '../../components/config/FormBuilder';
 import DynamicForm from '../../components/forms/DynamicForm';
 import { configService } from '../../services/configService';
@@ -43,7 +38,6 @@ import { ScoringRulesTab } from '../../components/config/ScoringRulesTab';
 
 import type { IntegrityThresholds, ApiResponse } from '../../types/config';
 
-
 import type {
   FormTemplate,
   IndicatorDefinition,
@@ -56,7 +50,6 @@ import type {
 import type {
   MaturityFramework,
   SubsystemDefinition,
-  //MaturityLevel
 } from '../../types/maturity';
 
 type TabType = 'weights' | 'indicators' | 'parameters' | 'scoring-rules' | 'forms' | 'versions' | 'test' | 'configuration' | 'maturity';
@@ -490,8 +483,6 @@ const ParametersTab: React.FC<{
   );
 };
 
-
-
 // Maturity Framework Tab Component
 const MaturityFrameworkTab: React.FC<{
   indicators: IndicatorDefinition[];
@@ -511,116 +502,110 @@ const MaturityFrameworkTab: React.FC<{
     const loadFramework = async () => {
       setLoadingFramework(true);
       try {
-        if (selectedIndicatorId === 'ind_iccs') {
-  const response = await maturityService.getSubsystems(selectedIndicatorId);
-  console.log('ICCS subsystems response:', response);
-  if (response.success && response.data) {
-    setSubsystems(response.data);
-  }
-} else {
-  const response = await maturityService.getIndicatorFramework(selectedIndicatorId);
-  console.log(`Framework for ${selectedIndicatorId}:`, response);
-  console.log(`Framework data:`, response.data);
-  
-  if (response.success && response.data) {
-    // Transform the data into the expected format
-    let frameworkData = response.data;
-    
-    // If the data doesn't have the expected structure, create it
-    if (!frameworkData.levels || !frameworkData.scoringRule) {
-      console.log('Transforming framework data for', selectedIndicatorId);
-      
-      // For Asset Declaration
-      if (selectedIndicatorId === 'ind_1770114038673_zuella44q' || selectedIndicatorId === 'ind_ad') {
-        frameworkData = {
-          enabled: true,
-          levels: [
-            { level: 0, name: 'Nascent', points: 0, description: '<90% compliance', parameters: [] },
-            { level: 1, name: 'Foundational', points: 5, description: '90-94% compliance', parameters: [] },
-            { level: 2, name: 'Established', points: 10, description: '95-99% compliance', parameters: [] },
-            { level: 3, name: 'Advanced', points: 14, description: '100% compliance', parameters: [] }
-          ],
-          scoringRule: {
-            type: 'percentage-range',
-            percentageThresholds: [
-              { min: 0, max: 89, level: 0, points: 0 },
-              { min: 90, max: 94, level: 1, points: 5 },
-              { min: 95, max: 99, level: 2, points: 10 },
-              { min: 100, max: 100, level: 3, points: 14 }
-            ]
+        if (selectedIndicatorId === 'ind_iccs_v3') {
+          const response = await maturityService.getSubsystems(selectedIndicatorId);
+          console.log('ICCS subsystems response:', response);
+          if (response.success && response.data) {
+            setSubsystems(response.data);
           }
-        };
-      }
-      // For Capacity Building
-      else if (selectedIndicatorId === 'ind_1770114038672_noe0zgtjx' || selectedIndicatorId === 'ind_capacity') {
-        frameworkData = {
-          enabled: true,
-          levels: [
-            { level: 0, name: 'Nascent', points: 0, description: '<50% completion', parameters: [] },
-            { level: 1, name: 'Foundational', points: 10, description: '50-69% completion', parameters: [] },
-            { level: 2, name: 'Established', points: 18, description: '70-84% completion', parameters: [] },
-            { level: 3, name: 'Advanced', points: 24, description: '≥85% completion', parameters: [] }
-          ],
-          scoringRule: {
-            type: 'percentage-range',
-            percentageThresholds: [
-              { min: 0, max: 49, level: 0, points: 0 },
-              { min: 50, max: 69, level: 1, points: 10 },
-              { min: 70, max: 84, level: 2, points: 18 },
-              { min: 85, max: 100, level: 3, points: 24 }
-            ]
+        } else {
+          const response = await maturityService.getIndicatorFramework(selectedIndicatorId);
+          console.log(`Framework for ${selectedIndicatorId}:`, response);
+          console.log(`Framework data:`, response.data);
+          
+          if (response.success && response.data) {
+            let frameworkData = response.data;
+            
+            if (!frameworkData.levels || !frameworkData.scoringRule) {
+              console.log('Transforming framework data for', selectedIndicatorId);
+              
+              if (selectedIndicatorId === 'ind_ad_v3') {
+                frameworkData = {
+                  enabled: true,
+                  levels: [
+                    { level: 0, name: 'Nascent', points: 0, description: '<90% compliance', parameters: [] },
+                    { level: 1, name: 'Foundational', points: 5, description: '90-94% compliance', parameters: [] },
+                    { level: 2, name: 'Established', points: 10, description: '95-99% compliance', parameters: [] },
+                    { level: 3, name: 'Advanced', points: 14, description: '100% compliance', parameters: [] }
+                  ],
+                  scoringRule: {
+                    type: 'percentage-range',
+                    percentageThresholds: [
+                      { min: 0, max: 89, level: 0, points: 0 },
+                      { min: 90, max: 94, level: 1, points: 5 },
+                      { min: 95, max: 99, level: 2, points: 10 },
+                      { min: 100, max: 100, level: 3, points: 14 }
+                    ]
+                  }
+                };
+              }
+              else if (selectedIndicatorId === 'ind_training_v3') {
+                frameworkData = {
+                  enabled: true,
+                  levels: [
+                    { level: 0, name: 'Nascent', points: 0, description: '<50% completion', parameters: [] },
+                    { level: 1, name: 'Foundational', points: 10, description: '50-69% completion', parameters: [] },
+                    { level: 2, name: 'Established', points: 18, description: '70-84% completion', parameters: [] },
+                    { level: 3, name: 'Advanced', points: 24, description: '≥85% completion', parameters: [] }
+                  ],
+                  scoringRule: {
+                    type: 'percentage-range',
+                    percentageThresholds: [
+                      { min: 0, max: 49, level: 0, points: 0 },
+                      { min: 50, max: 69, level: 1, points: 10 },
+                      { min: 70, max: 84, level: 2, points: 18 },
+                      { min: 85, max: 100, level: 3, points: 24 }
+                    ]
+                  }
+                };
+              }
+              else if (selectedIndicatorId === 'ind_cases_v3') {
+                frameworkData = {
+                  enabled: true,
+                  levels: [
+                    { level: 0, name: 'Nascent', points: 0, description: '≥5 cases', parameters: [] },
+                    { level: 1, name: 'Foundational', points: 6, description: '3-4 cases', parameters: [] },
+                    { level: 2, name: 'Established', points: 12, description: '1-2 cases', parameters: [] },
+                    { level: 3, name: 'Advanced', points: 20, description: '0 cases', parameters: [] }
+                  ],
+                  scoringRule: {
+                    type: 'severity-index',
+                    severityWeights: [
+                      { caseType: 'conviction', points: 3, description: 'Criminal conviction in court' },
+                      { caseType: 'prosecution', points: 2, description: 'Referred to OAG for prosecution' },
+                      { caseType: 'admin_action', points: 1, description: 'ACC-confirmed administrative action' }
+                    ],
+                    severityMapping: [
+                      { minScore: 0, maxScore: 0, level: 3, points: 20 },
+                      { minScore: 1, maxScore: 2, level: 2, points: 12 },
+                      { minScore: 3, maxScore: 4, level: 1, points: 6 },
+                      { minScore: 5, maxScore: 999, level: 0, points: 0 }
+                    ]
+                  }
+                };
+              }
+              else if (selectedIndicatorId === 'ind_coc_v3') {
+                frameworkData = {
+                  enabled: true,
+                  levels: [
+                    { level: 0, name: 'Nascent', points: 0, description: 'No active promotion', parameters: [] },
+                    { level: 1, name: 'Foundational', points: 4, description: 'Code exists and accessible', parameters: [] },
+                    { level: 2, name: 'Established', points: 7, description: 'Actively communicated', parameters: [] },
+                    { level: 3, name: 'Advanced', points: 10, description: 'Embedded in culture', parameters: [] }
+                  ],
+                  scoringRule: {
+                    type: 'maturity-level',
+                    levelPoints: { 0: 0, 1: 4, 2: 7, 3: 10 }
+                  }
+                };
+              }
+            }
+            
+            setMaturityFramework(frameworkData);
+          } else {
+            setMaturityFramework(null);
           }
-        };
-      }
-      // For Corruption Cases
-else if (selectedIndicatorId === 'ind_1770114038674_x4z2r2vjh' || selectedIndicatorId === 'ind_cases') {
-  frameworkData = {
-    enabled: true,
-    levels: [
-      { level: 0, name: 'Nascent', points: 0, description: '≥5 cases', parameters: [] },
-      { level: 1, name: 'Foundational', points: 6, description: '3-4 cases', parameters: [] },
-      { level: 2, name: 'Established', points: 12, description: '1-2 cases', parameters: [] },
-      { level: 3, name: 'Advanced', points: 20, description: '0 cases', parameters: [] }
-    ],
-    scoringRule: {
-      type: 'severity-index',
-      severityWeights: [
-        { caseType: 'conviction', points: 3, description: 'Criminal conviction in court' },
-        { caseType: 'prosecution', points: 2, description: 'Referred to OAG for prosecution' },
-        { caseType: 'admin_action', points: 1, description: 'ACC-confirmed administrative action' }
-      ],
-      severityMapping: [
-        { minScore: 0, maxScore: 0, level: 3, points: 20 },
-        { minScore: 1, maxScore: 2, level: 2, points: 12 },
-        { minScore: 3, maxScore: 4, level: 1, points: 6 },
-        { minScore: 5, maxScore: 999, level: 0, points: 0 }
-      ]
-    }
-  };
-}
-      // For Code of Conduct
-      else if (selectedIndicatorId === 'ind_coc') {
-        frameworkData = {
-          enabled: true,
-          levels: [
-            { level: 0, name: 'Nascent', points: 0, description: 'No active promotion', parameters: [] },
-            { level: 1, name: 'Foundational', points: 4, description: 'Code exists and accessible', parameters: [] },
-            { level: 2, name: 'Established', points: 7, description: 'Actively communicated', parameters: [] },
-            { level: 3, name: 'Advanced', points: 10, description: 'Embedded in culture', parameters: [] }
-          ],
-          scoringRule: {
-            type: 'maturity-level',
-            levelPoints: { 0: 0, 1: 4, 2: 7, 3: 10 }
-          }
-        };
-      }
-    }
-    
-    setMaturityFramework(frameworkData);
-  } else {
-    setMaturityFramework(null);
-  }
-}
+        }
       } catch (error) {
         console.error('Failed to load maturity framework:', error);
       } finally {
@@ -639,7 +624,7 @@ else if (selectedIndicatorId === 'ind_1770114038674_x4z2r2vjh' || selectedIndica
     if (!selectedIndicatorId) return;
 
     try {
-      if (selectedIndicatorId === 'ind_iccs') {
+      if (selectedIndicatorId === 'ind_iccs_v3') {
         await maturityService.updateSubsystems(selectedIndicatorId, subsystems);
       } else if (maturityFramework) {
         await maturityService.updateIndicatorFramework(selectedIndicatorId, maturityFramework);
@@ -707,7 +692,7 @@ else if (selectedIndicatorId === 'ind_1770114038674_x4z2r2vjh' || selectedIndica
               </div>
             )}
 
-            {!loadingFramework && selectedIndicatorId === 'ind_iccs' && (
+            {!loadingFramework && selectedIndicatorId === 'ind_iccs_v3' && (
               <ICCSConfig
                 indicatorId={selectedIndicatorId}
                 initialSubsystems={subsystems}
@@ -717,7 +702,7 @@ else if (selectedIndicatorId === 'ind_1770114038674_x4z2r2vjh' || selectedIndica
               />
             )}
 
-            {!loadingFramework && selectedIndicatorId === 'ind_coc' && (
+            {!loadingFramework && selectedIndicatorId === 'ind_coc_v3' && (
               <CodeOfConductConfig
                 indicatorId={selectedIndicatorId}
                 initialFramework={maturityFramework || undefined}
@@ -727,7 +712,7 @@ else if (selectedIndicatorId === 'ind_1770114038674_x4z2r2vjh' || selectedIndica
               />
             )}
 
-            {!loadingFramework && selectedIndicatorId === 'ind_capacity' && (
+            {!loadingFramework && selectedIndicatorId === 'ind_training_v3' && (
               <CapacityBuildingConfig
                 indicatorId={selectedIndicatorId}
                 initialFramework={maturityFramework || undefined}
@@ -737,7 +722,7 @@ else if (selectedIndicatorId === 'ind_1770114038674_x4z2r2vjh' || selectedIndica
               />
             )}
 
-            {!loadingFramework && selectedIndicatorId === 'ind_ad' && (
+            {!loadingFramework && selectedIndicatorId === 'ind_ad_v3' && (
               <AssetDeclarationConfig
                 indicatorId={selectedIndicatorId}
                 initialFramework={maturityFramework || undefined}
@@ -747,7 +732,7 @@ else if (selectedIndicatorId === 'ind_1770114038674_x4z2r2vjh' || selectedIndica
               />
             )}
 
-            {!loadingFramework && selectedIndicatorId === 'ind_cases' && (
+            {!loadingFramework && selectedIndicatorId === 'ind_cases_v3' && (
               <CorruptionCasesConfig
                 indicatorId={selectedIndicatorId}
                 initialFramework={maturityFramework || undefined}
@@ -758,11 +743,11 @@ else if (selectedIndicatorId === 'ind_1770114038674_x4z2r2vjh' || selectedIndica
             )}
 
             {!loadingFramework && 
-             selectedIndicatorId !== 'ind_iccs' && 
-             selectedIndicatorId !== 'ind_coc' && 
-             selectedIndicatorId !== 'ind_capacity' && 
-             selectedIndicatorId !== 'ind_ad' && 
-             selectedIndicatorId !== 'ind_cases' && (
+             selectedIndicatorId !== 'ind_iccs_v3' && 
+             selectedIndicatorId !== 'ind_coc_v3' && 
+             selectedIndicatorId !== 'ind_training_v3' && 
+             selectedIndicatorId !== 'ind_ad_v3' && 
+             selectedIndicatorId !== 'ind_cases_v3' && (
               <div className="bg-white border rounded-lg p-6">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Generic Maturity Framework</h3>
                 {maturityFramework ? (
@@ -839,22 +824,18 @@ export default function ConfigPage() {
         if (configRes.success) setSystemConfig(configRes.data || {});
 
         const configItemsRes = await configService.getSystemConfig();
-if (configItemsRes.success && configItemsRes.data) {
-  const configItems = configItemsRes.data;
-
-  const configObj: Record<string, any> = {};
-
-  // Iterate over object entries
-  Object.entries(configItems).forEach(([key, value]) => {
-    // Determine type and convert
-    if (typeof value === 'string' && !isNaN(Number(value))) {
-      configObj[key] = Number(value);
-    } else if (value === 'true' || value === 'false') {
-      configObj[key] = value === 'true';
-    } else {
-      configObj[key] = value;
-    }
-  });
+        if (configItemsRes.success && configItemsRes.data) {
+          const configItems = configItemsRes.data;
+          const configObj: Record<string, any> = {};
+          Object.entries(configItems).forEach(([key, value]) => {
+            if (typeof value === 'string' && !isNaN(Number(value))) {
+              configObj[key] = Number(value);
+            } else if (value === 'true' || value === 'false') {
+              configObj[key] = value === 'true';
+            } else {
+              configObj[key] = value;
+            }
+          });
           setSystemConfig(prev => ({ ...prev, ...configObj }));
         }
       }
@@ -867,7 +848,14 @@ if (configItemsRes.success && configItemsRes.data) {
         });
         
         if (indicatorsRes.success) {
-          setIndicators(indicatorsRes.data || []);
+          const fixedIndicators = (indicatorsRes.data || []).map(indicator => {
+            const isActiveValue = (indicator as any).isActive;
+            return {
+              ...indicator,
+              isActive: isActiveValue === true || isActiveValue === 1 || isActiveValue === '1'
+            };
+          });
+          setIndicators(fixedIndicators);
         } else {
           console.error('Failed to load indicators:', indicatorsRes.error);
           setError(indicatorsRes.error || 'Failed to load indicators');
@@ -926,103 +914,101 @@ if (configItemsRes.success && configItemsRes.data) {
   };
 
   const handleSystemConfigSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!systemConfig) return;
+    e.preventDefault();
+    if (!systemConfig) return;
 
-  setSaving(true);
-  setError(null);
-  setSuccess(null);
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
 
-  try {
-    const configItems: SystemConfigItem[] = [];
+    try {
+      const configItems: SystemConfigItem[] = [];
 
-    configItems.push({
-      configKey: 'high_integrity_min',
-      configValue: String(systemConfig.high_integrity_min || 80),
-      configType: 'number',
-      category: 'thresholds',
-      description: 'Minimum score for high integrity classification',
-      isPublic: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-
-    configItems.push({
-      configKey: 'medium_integrity_min',
-      configValue: String(systemConfig.medium_integrity_min || 50),
-      configType: 'number',
-      category: 'thresholds',
-      description: 'Minimum score for medium integrity classification',
-      isPublic: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-
-    if (systemConfig.default_assessment_year) {
       configItems.push({
-        configKey: 'default_assessment_year',
-        configValue: String(systemConfig.default_assessment_year),
+        configKey: 'high_integrity_min',
+        configValue: String(systemConfig.high_integrity_min || 80),
         configType: 'number',
-        category: 'system',
-        description: 'Default assessment year',
-        isPublic: false,
+        category: 'thresholds',
+        description: 'Minimum score for high integrity classification',
+        isPublic: true,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
-    }
 
-    if (systemConfig.max_file_size_mb) {
       configItems.push({
-        configKey: 'max_file_size_mb',
-        configValue: String(systemConfig.max_file_size_mb),
+        configKey: 'medium_integrity_min',
+        configValue: String(systemConfig.medium_integrity_min || 50),
         configType: 'number',
-        category: 'system',
-        description: 'Maximum file size for uploads in MB',
-        isPublic: false,
+        category: 'thresholds',
+        description: 'Minimum score for medium integrity classification',
+        isPublic: true,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
+
+      if (systemConfig.default_assessment_year) {
+        configItems.push({
+          configKey: 'default_assessment_year',
+          configValue: String(systemConfig.default_assessment_year),
+          configType: 'number',
+          category: 'system',
+          description: 'Default assessment year',
+          isPublic: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      if (systemConfig.max_file_size_mb) {
+        configItems.push({
+          configKey: 'max_file_size_mb',
+          configValue: String(systemConfig.max_file_size_mb),
+          configType: 'number',
+          category: 'system',
+          description: 'Maximum file size for uploads in MB',
+          isPublic: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      if (systemConfig.enable_auto_scoring !== undefined) {
+        configItems.push({
+          configKey: 'enable_auto_scoring',
+          configValue: String(systemConfig.enable_auto_scoring),
+          configType: 'boolean',
+          category: 'system',
+          description: 'Enable automatic scoring for assessments',
+          isPublic: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      const updatedConfig: IntegrityThresholds = { 
+        ...systemConfig,
+        highIntegrityMin: systemConfig.high_integrity_min || 80,
+        mediumIntegrityMin: systemConfig.medium_integrity_min || 50,
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'admin'
+      };
+
+      const updateRes: ApiResponse = await configService.updateSystemConfig(updatedConfig);
+
+      if (!updateRes.success) {
+        setError(updateRes.error || 'Failed to save system configuration.');
+      } else {
+        setSuccess('System configuration saved successfully!');
+        setTimeout(() => setSuccess(null), 3000);
+      }
+
+    } catch (err: any) {
+      console.error('Save error:', err);
+      setError(err.message || 'Network error. Please try again.');
+    } finally {
+      setSaving(false);
     }
-
-    if (systemConfig.enable_auto_scoring !== undefined) {
-      configItems.push({
-        configKey: 'enable_auto_scoring',
-        configValue: String(systemConfig.enable_auto_scoring),
-        configType: 'boolean',
-        category: 'system',
-        description: 'Enable automatic scoring for assessments',
-        isPublic: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    }
-
-    // Build updated config object
-    const updatedConfig: IntegrityThresholds = { 
-      ...systemConfig,
-      highIntegrityMin: systemConfig.high_integrity_min || 80,
-      mediumIntegrityMin: systemConfig.medium_integrity_min || 50,
-      updatedAt: new Date().toISOString(),
-      updatedBy: 'admin'
-    };
-
-    // Call updateSystemConfig once
-    const updateRes: ApiResponse = await configService.updateSystemConfig(updatedConfig);
-
-    if (!updateRes.success) {
-      setError(updateRes.error || 'Failed to save system configuration.');
-    } else {
-      setSuccess('System configuration saved successfully!');
-      setTimeout(() => setSuccess(null), 3000);
-    }
-
-  } catch (err: any) {
-    console.error('Save error:', err);
-    setError(err.message || 'Network error. Please try again.');
-  } finally {
-    setSaving(false);
-  }
-};
+  };
 
   const handleTemplateSave = async (template: FormTemplate): Promise<void> => {
     setSaving(true);
@@ -1120,180 +1106,175 @@ if (configItemsRes.success && configItemsRes.data) {
   };
 
   const handleFormSubmit = async (formData: any) => {
-  setSaving(true);
-  setError(null);
-  setSuccess(null);
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
 
-  try {
-    console.log('Form submission started with data:', formData);
+    try {
+      console.log('Form submission started with data:', formData);
 
-    const testAgencyId = `test-agency-${Date.now()}`;
-    const isAIMSForm = selectedTemplate?.name?.includes('AIMS') ||
-      selectedTemplate?.description?.includes('AIMS') ||
-      (selectedTemplate?.indicatorIds && selectedTemplate.indicatorIds.length > 1);
+      const testAgencyId = `test-agency-${Date.now()}`;
+      const isAIMSForm = selectedTemplate?.name?.includes('AIMS') ||
+        selectedTemplate?.description?.includes('AIMS') ||
+        (selectedTemplate?.indicatorIds && selectedTemplate.indicatorIds.length > 1);
 
-    if (isAIMSForm) {
-      console.log('Saving complete AIMS assessment form...');
-      
-      const indicatorScores: Record<string, number> = {};
-      const responseData: Record<string, any> = {};
-
-      // ICCS - maturity levels
-      if (selectedTemplate?.indicatorIds?.includes('ind_1770114038668_i6jrig8sz') || 
-          formData.complaint_level !== undefined) {
-        responseData['ind_1770114038668_i6jrig8sz'] = {
-          complaint_level: formData.complaint_level,
-          coi_level: formData.coi_level,
-          gift_level: formData.gift_level,
-          proactive_level: formData.proactive_level
-        };
+      if (isAIMSForm) {
+        console.log('Saving complete AIMS assessment form...');
         
-        // Calculate ICCS score from maturity levels
-        const levelPoints: Record<number, number> = {0:0, 1:4, 2:6, 3:8};
-        const iccsScore = (levelPoints[formData.complaint_level] || 0) +
-                          (levelPoints[formData.coi_level] || 0) +
-                          (levelPoints[formData.gift_level] || 0) +
-                          (levelPoints[formData.proactive_level] || 0);
-        indicatorScores['ind_1770114038668_i6jrig8sz'] = iccsScore;
-      }
+        const indicatorScores: Record<string, number> = {};
+        const responseData: Record<string, any> = {};
 
-      // Capacity Building
-      if (selectedTemplate?.indicatorIds?.includes('ind_1770114038672_noe0zgtjx') || 
-          formData.total_employees !== undefined) {
-        responseData['ind_1770114038672_noe0zgtjx'] = {
-          total_employees: formData.total_employees,
-          completed_employees: formData.completed_employees
-        };
-        
-        // Calculate training score (0-24)
-        const total = Number(formData.total_employees) || 0;
-        const completed = Number(formData.completed_employees) || 0;
-        let trainingScore = 0;
-        if (total > 0) {
-          const percentage = (completed / total) * 100;
-          if (percentage >= 85) trainingScore = 24;
-          else if (percentage >= 70) trainingScore = 18;
-          else if (percentage >= 50) trainingScore = 10;
+        // ICCS - maturity levels (UPDATED ID)
+        if (selectedTemplate?.indicatorIds?.includes('ind_iccs_v3') || 
+            formData.complaint_level !== undefined) {
+          responseData['ind_iccs_v3'] = {
+            complaint_level: formData.complaint_level,
+            coi_level: formData.coi_level,
+            gift_level: formData.gift_level,
+            proactive_level: formData.proactive_level
+          };
+          
+          const levelPoints: Record<number, number> = {0:0, 1:4, 2:6, 3:8};
+          const iccsScore = (levelPoints[formData.complaint_level] || 0) +
+                            (levelPoints[formData.coi_level] || 0) +
+                            (levelPoints[formData.gift_level] || 0) +
+                            (levelPoints[formData.proactive_level] || 0);
+          indicatorScores['ind_iccs_v3'] = iccsScore;
         }
-        indicatorScores['ind_1770114038672_noe0zgtjx'] = trainingScore;
-      }
 
-      // Asset Declaration
-      if (selectedTemplate?.indicatorIds?.includes('ind_1770114038673_zuella44q') || 
-          formData.total_covered_officials !== undefined) {
-        responseData['ind_1770114038673_zuella44q'] = {
-          total_covered_officials: formData.total_covered_officials,
-          officials_submitted_on_time: formData.officials_submitted_on_time
-        };
-        
-        // Calculate AD score (0-14)
-        const total = Number(formData.total_covered_officials) || 0;
-        const submitted = Number(formData.officials_submitted_on_time) || 0;
-        let adScore = 0;
-        if (total > 0) {
-          const percentage = (submitted / total) * 100;
-          if (percentage >= 100) adScore = 14;
-          else if (percentage >= 95) adScore = 10;
-          else if (percentage >= 90) adScore = 5;
+        // Capacity Building (UPDATED ID)
+        if (selectedTemplate?.indicatorIds?.includes('ind_training_v3') || 
+            formData.total_employees !== undefined) {
+          responseData['ind_training_v3'] = {
+            total_employees: formData.total_employees,
+            completed_employees: formData.completed_employees
+          };
+          
+          const total = Number(formData.total_employees) || 0;
+          const completed = Number(formData.completed_employees) || 0;
+          let trainingScore = 0;
+          if (total > 0) {
+            const percentage = (completed / total) * 100;
+            if (percentage >= 85) trainingScore = 24;
+            else if (percentage >= 70) trainingScore = 18;
+            else if (percentage >= 50) trainingScore = 10;
+          }
+          indicatorScores['ind_training_v3'] = trainingScore;
         }
-        indicatorScores['ind_1770114038673_zuella44q'] = adScore;
-      }
 
-      // Code of Conduct
-      if (selectedTemplate?.indicatorIds?.includes('ind_coc') || 
-          formData.coc_level !== undefined) {
-        responseData['ind_coc'] = {
-          coc_level: formData.coc_level
-        };
-        
-        // Calculate CoC score (0-10)
-        const levelPoints: Record<number, number> = {0:0, 1:4, 2:7, 3:10};
-        const cocScore = levelPoints[formData.coc_level] || 0;
-        indicatorScores['ind_coc'] = cocScore;
-      }
+        // Asset Declaration (UPDATED ID)
+        if (selectedTemplate?.indicatorIds?.includes('ind_ad_v3') || 
+            formData.total_covered_officials !== undefined) {
+          responseData['ind_ad_v3'] = {
+            total_covered_officials: formData.total_covered_officials,
+            officials_submitted_on_time: formData.officials_submitted_on_time
+          };
+          
+          const total = Number(formData.total_covered_officials) || 0;
+          const submitted = Number(formData.officials_submitted_on_time) || 0;
+          let adScore = 0;
+          if (total > 0) {
+            const percentage = (submitted / total) * 100;
+            if (percentage >= 100) adScore = 14;
+            else if (percentage >= 95) adScore = 10;
+            else if (percentage >= 90) adScore = 5;
+          }
+          indicatorScores['ind_ad_v3'] = adScore;
+        }
 
-      // Corruption Cases
-      if (selectedTemplate?.indicatorIds?.includes('ind_1770114038674_x4z2r2vjh') || 
-          formData.conviction_cases !== undefined) {
-        responseData['ind_1770114038674_x4z2r2vjh'] = {
-          conviction_cases: formData.conviction_cases,
-          prosecution_cases: formData.prosecution_cases,
-          admin_action_cases: formData.admin_action_cases
-        };
-        
-        // Calculate cases score (0-20)
-        const convictions = Number(formData.conviction_cases) || 0;
-        const prosecutions = Number(formData.prosecution_cases) || 0;
-        const adminActions = Number(formData.admin_action_cases) || 0;
-        const severityScore = (convictions * 3) + (prosecutions * 2) + (adminActions * 1);
-        
-        let casesScore = 0;
-        if (severityScore === 0) casesScore = 20;
-        else if (severityScore <= 2) casesScore = 12;
-        else if (severityScore <= 4) casesScore = 6;
-        indicatorScores['ind_1770114038674_x4z2r2vjh'] = casesScore;
-      }
+        // Code of Conduct (UPDATED ID)
+        if (selectedTemplate?.indicatorIds?.includes('ind_coc_v3') || 
+            formData.coc_level !== undefined) {
+          responseData['ind_coc_v3'] = {
+            coc_level: formData.coc_level
+          };
+          
+          const levelPoints: Record<number, number> = {0:0, 1:4, 2:7, 3:10};
+          const cocScore = levelPoints[formData.coc_level] || 0;
+          indicatorScores['ind_coc_v3'] = cocScore;
+        }
 
-      const result = await configService.saveAllAssessments({
-        agencyId: testAgencyId,
-        indicatorScores,
-        responseData,
-        status: 'DRAFT'
-      });
+        // Corruption Cases (UPDATED ID)
+        if (selectedTemplate?.indicatorIds?.includes('ind_cases_v3') || 
+            formData.conviction_cases !== undefined) {
+          responseData['ind_cases_v3'] = {
+            conviction_cases: formData.conviction_cases,
+            prosecution_cases: formData.prosecution_cases,
+            admin_action_cases: formData.admin_action_cases
+          };
+          
+          const convictions = Number(formData.conviction_cases) || 0;
+          const prosecutions = Number(formData.prosecution_cases) || 0;
+          const adminActions = Number(formData.admin_action_cases) || 0;
+          const severityScore = (convictions * 3) + (prosecutions * 2) + (adminActions * 1);
+          
+          let casesScore = 0;
+          if (severityScore === 0) casesScore = 20;
+          else if (severityScore <= 2) casesScore = 12;
+          else if (severityScore <= 4) casesScore = 6;
+          indicatorScores['ind_cases_v3'] = casesScore;
+        }
 
-      if (result.success) {
-        const totalScore = Object.values(indicatorScores).reduce((a, b) => a + b, 0);
-        setSuccess(`Complete AIMS assessment saved successfully! Score: ${totalScore.toFixed(1)}/100`);
+        const result = await configService.saveAllAssessments({
+          agencyId: testAgencyId,
+          indicatorScores,
+          responseData,
+          status: 'DRAFT'
+        });
+
+        if (result.success) {
+          const totalScore = Object.values(indicatorScores).reduce((a, b) => a + b, 0);
+          setSuccess(`Complete AIMS assessment saved successfully! Score: ${totalScore.toFixed(1)}/100`);
+        } else {
+          setError(result.error || 'Failed to save complete assessment');
+        }
       } else {
-        setError(result.error || 'Failed to save complete assessment');
-      }
-    } else {
-      console.log('Saving single indicator test form...');
+        console.log('Saving single indicator test form...');
 
-      let indicatorId = selectedTemplate?.indicatorIds?.[0];
-      if (!indicatorId) {
-        if (formData.total_employees !== undefined) indicatorId = 'ind_1770114038672_noe0zgtjx';
-        else if (formData.total_covered_officials !== undefined) indicatorId = 'ind_1770114038673_zuella44q';
-        else if (formData.conviction_cases !== undefined) indicatorId = 'ind_1770114038674_x4z2r2vjh';
-        else if (formData.complaint_level !== undefined) indicatorId = 'ind_1770114038668_i6jrig8sz';
-        else if (formData.coc_level !== undefined) indicatorId = 'ind_coc';
-        else indicatorId = 'unknown';
-      }
-
-      const responseData: Record<string, any> = {};
-      Object.keys(formData).forEach(key => {
-        if (!key.startsWith('_')) {
-          responseData[key] = formData[key];
+        let indicatorId = selectedTemplate?.indicatorIds?.[0];
+        if (!indicatorId) {
+          if (formData.total_employees !== undefined) indicatorId = 'ind_training_v3';
+          else if (formData.total_covered_officials !== undefined) indicatorId = 'ind_ad_v3';
+          else if (formData.conviction_cases !== undefined) indicatorId = 'ind_cases_v3';
+          else if (formData.complaint_level !== undefined) indicatorId = 'ind_iccs_v3';
+          else if (formData.coc_level !== undefined) indicatorId = 'ind_coc_v3';
+          else indicatorId = 'unknown';
         }
-      });
 
-      const score = formData._totalScore || 
-                    formData._scores?.[Object.keys(formData._scores || {})[0]] || 
-                    0;
+        const responseData: Record<string, any> = {};
+        Object.keys(formData).forEach(key => {
+          if (!key.startsWith('_')) {
+            responseData[key] = formData[key];
+          }
+        });
 
-      const result = await configService.saveIndicatorAssessment({
-        agencyId: testAgencyId,
-        indicatorId,
-        responseData,
-        score,
-        templateId: selectedTemplate?.id
-      });
+        const score = formData._totalScore || 
+                      formData._scores?.[Object.keys(formData._scores || {})[0]] || 
+                      0;
 
-      if (result.success) {
-        const scoringData = result.data?.scoring || result.data;
-        const finalScore = scoringData?.finalScore || score;
-        setSuccess(`Test assessment saved successfully! Score: ${finalScore}`);
-      } else {
-        setError(result.error || 'Failed to save test assessment');
+        const result = await configService.saveIndicatorAssessment({
+          agencyId: testAgencyId,
+          indicatorId,
+          responseData,
+          score,
+          templateId: selectedTemplate?.id
+        });
+
+        if (result.success) {
+          const scoringData = result.data?.scoring || result.data;
+          const finalScore = scoringData?.finalScore || score;
+          setSuccess(`Test assessment saved successfully! Score: ${finalScore}`);
+        } else {
+          setError(result.error || 'Failed to save test assessment');
+        }
       }
+    } catch (error: any) {
+      console.error('Form submission error:', error);
+      setError(error.message || 'An unexpected error occurred while saving the assessment');
+    } finally {
+      setSaving(false);
     }
-  } catch (error: any) {
-    console.error('Form submission error:', error);
-    setError(error.message || 'An unexpected error occurred while saving the assessment');
-  } finally {
-    setSaving(false);
-  }
-};
+  };
 
   const handleCreateConfigurationVersion = async (versionData: any) => {
     setSaving(true);
@@ -1394,334 +1375,348 @@ if (configItemsRes.success && configItemsRes.data) {
     }
   };
 
-  // Helper to create AIMS assessment template
-const createAssessmentTemplate = (type: 'aims' | 'iccs-only' | 'cases-only'): FormTemplate => {
-  const baseTemplate: FormTemplate = {
-    id: '',
-    name: type === 'aims' ? 'AIMS Full Assessment' : 
-          type === 'iccs-only' ? 'ICCS Assessment' : 'Corruption Cases Assessment',
-    description: type === 'aims' ? 'Complete AIMS assessment covering all 5 indicators' :
-                 type === 'iccs-only' ? 'Assessment of Internal Corruption Control Systems only' :
-                 'Assessment of corruption case severity',
-    templateType: 'assessment' as TemplateType,
-    indicatorIds: type === 'aims' ? 
-      ['ind_1770114038668_i6jrig8sz', 'ind_1770114038672_noe0zgtjx', 'ind_1770114038673_zuella44q', 'ind_coc', 'ind_1770114038674_x4z2r2vjh'] :
-      type === 'iccs-only' ? ['ind_1770114038668_i6jrig8sz'] : ['ind_1770114038674_x4z2r2vjh'],
-    sections: [],
-    validationRules: {},
-    uiConfig: {
-      show_progress_bar: true,
-      show_section_numbers: true,
-      submit_button_text: 'Submit Assessment'
-    },
-    version: '1.0.0',
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    createdBy: 'admin',
-    updatedBy: 'admin'
+  // Helper to create AIMS assessment template - UPDATED WITH CORRECT INDICATOR IDs
+  const createAssessmentTemplate = (type: 'aims' | 'iccs-only' | 'cases-only'): FormTemplate => {
+    const indicatorIds = type === 'aims' ? 
+      ['ind_iccs_v3', 'ind_training_v3', 'ind_ad_v3', 'ind_coc_v3', 'ind_cases_v3'] :
+      type === 'iccs-only' ? ['ind_iccs_v3'] : ['ind_cases_v3'];
+    
+    const baseTemplate: FormTemplate = {
+      id: '',
+      name: type === 'aims' ? 'AIMS Full Assessment' : 
+            type === 'iccs-only' ? 'ICCS Assessment' : 'Corruption Cases Assessment',
+      description: type === 'aims' ? 'Complete AIMS assessment covering all 5 indicators' :
+                   type === 'iccs-only' ? 'Assessment of Internal Corruption Control Systems only' :
+                   'Assessment of corruption case severity',
+      templateType: 'assessment' as TemplateType,
+      indicatorIds: indicatorIds,
+      sections: [],
+      validationRules: {},
+      uiConfig: {
+        show_progress_bar: true,
+        show_section_numbers: true,
+        submit_button_text: 'Submit Assessment'
+      },
+      version: '1.0.0',
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: 'admin',
+      updatedBy: 'admin'
+    };
+
+    if (type === 'aims' || type === 'iccs-only') {
+      baseTemplate.sections = [
+        {
+          id: `section_${Date.now()}_1`,
+          title: 'Internal Corruption Control Systems (ICCS)',
+          description: 'Assess the maturity of your four core integrity systems',
+          columns: 1,
+          displayOrder: 0,
+          fields: [
+            {
+              id: `field_${Date.now()}_complaint`,
+              indicatorId: 'ind_iccs_v3',
+              parameterCode: 'complaint_level',
+              label: 'Complaint Management Mechanism',
+              type: 'select',
+              required: true,
+              displayOrder: 0,
+              uiSettings: {
+                help_text: 'Select the maturity level of your complaint management system',
+                options: [
+                  { label: 'Level 0: Nascent - No formal system (0 points)', value: 0 },
+                  { label: 'Level 1: Foundational - Basic system exists (4 points)', value: 1 },
+                  { label: 'Level 2: Established - System operational (6 points)', value: 2 },
+                  { label: 'Level 3: Advanced - System embedded (8 points)', value: 3 }
+                ]
+              }
+            },
+            {
+              id: `field_${Date.now()}_coi`,
+              indicatorId: 'ind_iccs_v3',
+              parameterCode: 'coi_level',
+              label: 'Conflict of Interest Management',
+              type: 'select',
+              required: true,
+              displayOrder: 1,
+              uiSettings: {
+                help_text: 'Select the maturity level of your CoI management',
+                options: [
+                  { label: 'Level 0: Nascent - No formal system (0 points)', value: 0 },
+                  { label: 'Level 1: Foundational - Basic policy exists (4 points)', value: 1 },
+                  { label: 'Level 2: Established - Active management (6 points)', value: 2 },
+                  { label: 'Level 3: Advanced - Embedded in culture (8 points)', value: 3 }
+                ]
+              }
+            },
+            {
+              id: `field_${Date.now()}_gift`,
+              indicatorId: 'ind_iccs_v3',
+              parameterCode: 'gift_level',
+              label: 'Gift Management System',
+              type: 'select',
+              required: true,
+              displayOrder: 2,
+              uiSettings: {
+                help_text: 'Select the maturity level of your gift management',
+                options: [
+                  { label: 'Level 0: Nascent - No formal system (0 points)', value: 0 },
+                  { label: 'Level 1: Foundational - Register exists (4 points)', value: 1 },
+                  { label: 'Level 2: Established - Active management (6 points)', value: 2 },
+                  { label: 'Level 3: Advanced - Proactive analysis (8 points)', value: 3 }
+                ]
+              }
+            },
+            {
+              id: `field_${Date.now()}_proactive`,
+              indicatorId: 'ind_iccs_v3',
+              parameterCode: 'proactive_level',
+              label: 'Proactive Integrity Enhancements',
+              type: 'select',
+              required: true,
+              displayOrder: 3,
+              uiSettings: {
+                help_text: 'Select the maturity level of your proactive integrity efforts',
+                options: [
+                  { label: 'Level 0: Nascent - No initiatives (0 points)', value: 0 },
+                  { label: 'Level 1: Foundational - Planned initiatives (2-3 points)', value: 1 },
+                  { label: 'Level 2: Established - Implemented initiatives (5-6 points)', value: 2 },
+                  { label: 'Level 3: Advanced - Systematic program (8 points)', value: 3 }
+                ]
+              }
+            }
+          ]
+        }
+      ];
+    }
+
+    if (type === 'aims') {
+      baseTemplate.sections = [
+        ...(baseTemplate.sections || []),
+        {
+          id: `section_${Date.now()}_2`,
+          title: 'Integrity Capacity Building',
+          description: 'Staff completion of ACC e-Learning course',
+          columns: 2,
+          displayOrder: 1,
+          fields: [
+            {
+              id: `field_${Date.now()}_total_employees`,
+              indicatorId: 'ind_training_v3',
+              parameterCode: 'total_employees',
+              label: 'Total Employees',
+              type: 'number',
+              required: true,
+              displayOrder: 0,
+              uiSettings: {
+                min: 0,
+                help_text: 'Total number of employees in your agency'
+              }
+            },
+            {
+              id: `field_${Date.now()}_completed_employees`,
+              indicatorId: 'ind_training_v3',
+              parameterCode: 'completed_employees',
+              label: 'Employees Who Completed Training',
+              type: 'number',
+              required: true,
+              displayOrder: 1,
+              uiSettings: {
+                min: 0,
+                help_text: 'Number of employees who completed ACC e-Learning'
+              }
+            }
+          ]
+        },
+        {
+          id: `section_${Date.now()}_3`,
+          title: 'Asset Declaration Compliance',
+          description: 'Percentage of covered officials submitting on time',
+          columns: 2,
+          displayOrder: 2,
+          fields: [
+            {
+              id: `field_${Date.now()}_total_officials`,
+              indicatorId: 'ind_ad_v3',
+              parameterCode: 'total_covered_officials',
+              label: 'Total Covered Officials',
+              type: 'number',
+              required: true,
+              displayOrder: 0,
+              uiSettings: {
+                min: 0,
+                help_text: 'Total number of officials required to declare'
+              }
+            },
+            {
+              id: `field_${Date.now()}_submitted_officials`,
+              indicatorId: 'ind_ad_v3',
+              parameterCode: 'officials_submitted_on_time',
+              label: 'Officials Who Submitted on Time',
+              type: 'number',
+              required: true,
+              displayOrder: 1,
+              uiSettings: {
+                min: 0,
+                help_text: 'Number who submitted by the deadline'
+              }
+            }
+          ]
+        },
+        {
+          id: `section_${Date.now()}_4`,
+          title: 'Code of Conduct',
+          description: 'Awareness and application of Code of Conduct',
+          columns: 1,
+          displayOrder: 3,
+          fields: [
+            {
+              id: `field_${Date.now()}_coc_level`,
+              indicatorId: 'ind_coc_v3',
+              parameterCode: 'coc_level',
+              label: 'Code of Conduct Maturity Level',
+              type: 'select',
+              required: true,
+              displayOrder: 0,
+              uiSettings: {
+                help_text: 'Select the maturity level of your Code of Conduct implementation',
+                options: [
+                  { label: 'Level 0: Nascent - No active promotion (0 points)', value: 0 },
+                  { label: 'Level 1: Foundational - Code exists and accessible (4 points)', value: 1 },
+                  { label: 'Level 2: Established - Actively communicated (7 points)', value: 2 },
+                  { label: 'Level 3: Advanced - Embedded in culture (10 points)', value: 3 }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          id: `section_${Date.now()}_5`,
+          title: 'Corruption Case Severity',
+          description: 'Substantiated cases in the fiscal year',
+          columns: 3,
+          displayOrder: 4,
+          fields: [
+            {
+              id: `field_${Date.now()}_convictions`,
+              indicatorId: 'ind_cases_v3',
+              parameterCode: 'conviction_cases',
+              label: 'Convictions (3 pts each)',
+              type: 'number',
+              required: true,
+              displayOrder: 0,
+              uiSettings: {
+                min: 0,
+                help_text: 'Number of criminal convictions'
+              }
+            },
+            {
+              id: `field_${Date.now()}_prosecutions`,
+              indicatorId: 'ind_cases_v3',
+              parameterCode: 'prosecution_cases',
+              label: 'Prosecutions (2 pts each)',
+              type: 'number',
+              required: true,
+              displayOrder: 1,
+              uiSettings: {
+                min: 0,
+                help_text: 'Number referred to OAG for prosecution'
+              }
+            },
+            {
+              id: `field_${Date.now()}_admin_actions`,
+              indicatorId: 'ind_cases_v3',
+              parameterCode: 'admin_action_cases',
+              label: 'Admin Actions (1 pt each)',
+              type: 'number',
+              required: true,
+              displayOrder: 2,
+              uiSettings: {
+                min: 0,
+                help_text: 'Number of ACC-confirmed administrative actions'
+              }
+            }
+          ]
+        }
+      ];
+    }
+
+    return baseTemplate;
   };
 
-  if (type === 'aims' || type === 'iccs-only') {
-    baseTemplate.sections = [
-      {
-        id: `section_${Date.now()}_1`,
-        title: 'Internal Corruption Control Systems (ICCS)',
-        description: 'Assess the maturity of your four core integrity systems',
-        columns: 1,
-        displayOrder: 0,
-        fields: [
-          {
-            id: `field_${Date.now()}_complaint`,
-            parameterCode: 'complaint_level',
-            label: 'Complaint Management Mechanism',
-            type: 'select',
-            required: true,
-            displayOrder: 0,
-            uiSettings: {
-              help_text: 'Select the maturity level of your complaint management system',
-              options: [
-                { label: 'Level 0: Nascent - No formal system (0 points)', value: 0 },
-                { label: 'Level 1: Foundational - Basic system exists (4 points)', value: 1 },
-                { label: 'Level 2: Established - System operational (6 points)', value: 2 },
-                { label: 'Level 3: Advanced - System embedded (8 points)', value: 3 }
-              ]
-            }
-          },
-          {
-            id: `field_${Date.now()}_coi`,
-            parameterCode: 'coi_level',
-            label: 'Conflict of Interest Management',
-            type: 'select',
-            required: true,
-            displayOrder: 1,
-            uiSettings: {
-              help_text: 'Select the maturity level of your CoI management',
-              options: [
-                { label: 'Level 0: Nascent - No formal system (0 points)', value: 0 },
-                { label: 'Level 1: Foundational - Basic policy exists (4 points)', value: 1 },
-                { label: 'Level 2: Established - Active management (6 points)', value: 2 },
-                { label: 'Level 3: Advanced - Embedded in culture (8 points)', value: 3 }
-              ]
-            }
-          },
-          {
-            id: `field_${Date.now()}_gift`,
-            parameterCode: 'gift_level',
-            label: 'Gift Management System',
-            type: 'select',
-            required: true,
-            displayOrder: 2,
-            uiSettings: {
-              help_text: 'Select the maturity level of your gift management',
-              options: [
-                { label: 'Level 0: Nascent - No formal system (0 points)', value: 0 },
-                { label: 'Level 1: Foundational - Register exists (4 points)', value: 1 },
-                { label: 'Level 2: Established - Active management (6 points)', value: 2 },
-                { label: 'Level 3: Advanced - Proactive analysis (8 points)', value: 3 }
-              ]
-            }
-          },
-          {
-            id: `field_${Date.now()}_proactive`,
-            parameterCode: 'proactive_level',
-            label: 'Proactive Integrity Enhancements',
-            type: 'select',
-            required: true,
-            displayOrder: 3,
-            uiSettings: {
-              help_text: 'Select the maturity level of your proactive integrity efforts',
-              options: [
-                { label: 'Level 0: Nascent - No initiatives (0 points)', value: 0 },
-                { label: 'Level 1: Foundational - Planned initiatives (2-3 points)', value: 1 },
-                { label: 'Level 2: Established - Implemented initiatives (5-6 points)', value: 2 },
-                { label: 'Level 3: Advanced - Systematic program (8 points)', value: 3 }
-              ]
-            }
-          }
-        ]
-      }
-    ];
-  }
-
-  if (type === 'aims') {
-    baseTemplate.sections = [
-      ...(baseTemplate.sections || []),
-      {
-        id: `section_${Date.now()}_2`,
-        title: 'Integrity Capacity Building',
-        description: 'Staff completion of ACC e-Learning course',
-        columns: 2,
-        displayOrder: 1,
-        fields: [
-          {
-            id: `field_${Date.now()}_total_employees`,
-            parameterCode: 'total_employees',
-            label: 'Total Employees',
-            type: 'number',
-            required: true,
-            displayOrder: 0,
-            uiSettings: {
-              min: 0,
-              help_text: 'Total number of employees in your agency'
-            }
-          },
-          {
-            id: `field_${Date.now()}_completed_employees`,
-            parameterCode: 'completed_employees',
-            label: 'Employees Who Completed Training',
-            type: 'number',
-            required: true,
-            displayOrder: 1,
-            uiSettings: {
-              min: 0,
-              help_text: 'Number of employees who completed ACC e-Learning'
-            }
-          }
-        ]
+  const createEmptyTemplate = (): FormTemplate => {
+    return {
+      id: '',
+      name: '',
+      description: '',
+      templateType: 'assessment' as TemplateType,
+      indicatorIds: [],
+      sections: [],
+      validationRules: {},
+      uiConfig: {
+        show_progress_bar: true,
+        show_section_numbers: true,
+        submit_button_text: 'Submit'
       },
-      {
-        id: `section_${Date.now()}_3`,
-        title: 'Asset Declaration Compliance',
-        description: 'Percentage of covered officials submitting on time',
-        columns: 2,
-        displayOrder: 2,
-        fields: [
-          {
-            id: `field_${Date.now()}_total_officials`,
-            parameterCode: 'total_covered_officials',
-            label: 'Total Covered Officials',
-            type: 'number',
-            required: true,
-            displayOrder: 0,
-            uiSettings: {
-              min: 0,
-              help_text: 'Total number of officials required to declare'
-            }
-          },
-          {
-            id: `field_${Date.now()}_submitted_officials`,
-            parameterCode: 'officials_submitted_on_time',
-            label: 'Officials Who Submitted on Time',
-            type: 'number',
-            required: true,
-            displayOrder: 1,
-            uiSettings: {
-              min: 0,
-              help_text: 'Number who submitted by the deadline'
-            }
-          }
-        ]
-      },
-      {
-        id: `section_${Date.now()}_4`,
-        title: 'Code of Conduct',
-        description: 'Awareness and application of Code of Conduct',
-        columns: 1,
-        displayOrder: 3,
-        fields: [
-          {
-            id: `field_${Date.now()}_coc_level`,
-            parameterCode: 'coc_level',
-            label: 'Code of Conduct Maturity Level',
-            type: 'select',
-            required: true,
-            displayOrder: 0,
-            uiSettings: {
-              help_text: 'Select the maturity level of your Code of Conduct implementation',
-              options: [
-                { label: 'Level 0: Nascent - No active promotion (0 points)', value: 0 },
-                { label: 'Level 1: Foundational - Code exists and accessible (4 points)', value: 1 },
-                { label: 'Level 2: Established - Actively communicated (7 points)', value: 2 },
-                { label: 'Level 3: Advanced - Embedded in culture (10 points)', value: 3 }
-              ]
-            }
-          }
-        ]
-      },
-      {
-        id: `section_${Date.now()}_5`,
-        title: 'Corruption Case Severity',
-        description: 'Substantiated cases in the fiscal year',
-        columns: 3,
-        displayOrder: 4,
-        fields: [
-          {
-            id: `field_${Date.now()}_convictions`,
-            parameterCode: 'conviction_cases',
-            label: 'Convictions (3 pts each)',
-            type: 'number',
-            required: true,
-            displayOrder: 0,
-            uiSettings: {
-              min: 0,
-              help_text: 'Number of criminal convictions'
-            }
-          },
-          {
-            id: `field_${Date.now()}_prosecutions`,
-            parameterCode: 'prosecution_cases',
-            label: 'Prosecutions (2 pts each)',
-            type: 'number',
-            required: true,
-            displayOrder: 1,
-            uiSettings: {
-              min: 0,
-              help_text: 'Number referred to OAG for prosecution'
-            }
-          },
-          {
-            id: `field_${Date.now()}_admin_actions`,
-            parameterCode: 'admin_action_cases',
-            label: 'Admin Actions (1 pt each)',
-            type: 'number',
-            required: true,
-            displayOrder: 2,
-            uiSettings: {
-              min: 0,
-              help_text: 'Number of ACC-confirmed administrative actions'
-            }
-          }
-        ]
-      }
-    ];
-  }
-
-  return baseTemplate;
-};
-
-const createEmptyTemplate = (): FormTemplate => {
-  return {
-    id: '',
-    name: '',
-    description: '',
-    templateType: 'assessment' as TemplateType,
-    indicatorIds: [],
-    sections: [],
-    validationRules: {},
-    uiConfig: {
-      show_progress_bar: true,
-      show_section_numbers: true,
-      submit_button_text: 'Submit'
-    },
-    version: '1.0.0',
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    createdBy: 'admin',
-    updatedBy: 'admin'
+      version: '1.0.0',
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: 'admin',
+      updatedBy: 'admin'
+    };
   };
-};
 
   const totalWeight = getTotalWeight();
   const isWeightValid = Math.abs(totalWeight - 100) < 0.1;
 
- const aimsIndicators = [
-  {
-    id: 'ind_1770114038668_i6jrig8sz', // ICCS
-    name: 'Internal Corruption Control Systems (ICCS)',
-    weight: 32,
-    category: 'integrity_promotion' as IndicatorCategory,
-    description: 'Functioning of the agency\'s four core integrity systems (Complaint, CoI, Gift, Proactive)',
-    maxScore: 32,
-    subsystems: ['Complaint', 'CoI', 'Gift', 'Proactive']
-  },
-  {
-    id: 'ind_1770114038672_noe0zgtjx', // Capacity Building
-    name: 'Integrity Capacity Building',
-    weight: 24,
-    category: 'integrity_promotion' as IndicatorCategory,
-    description: 'Staff completion of ACC\'s e-Learning course',
-    maxScore: 24,
-    scoringType: 'percentage-range'
-  },
-  {
-    id: 'ind_1770114038673_zuella44q', // Asset Declaration
-    name: 'Asset Declaration (AD) Compliance',
-    weight: 14,
-    category: 'integrity_promotion' as IndicatorCategory,
-    description: '% of covered officials submitting AD on time',
-    maxScore: 14,
-    scoringType: 'percentage-range'
-  },
-  {
-    id: 'ind_coc', // Code of Conduct
-    name: 'Code of Conduct Awareness & Application',
-    weight: 10,
-    category: 'integrity_promotion' as IndicatorCategory,
-    description: 'Integration of Code of Conduct into agency culture',
-    maxScore: 10
-  },
-  {
-    id: 'ind_1770114038674_x4z2r2vjh', // Corruption Cases
-    name: 'Corruption Case Severity & Resolution',
-    weight: 20,
-    category: 'corruption_accountability' as IndicatorCategory,
-    description: 'Weighted severity of corruption cases involving agency staff',
-    maxScore: 20,
-    scoringType: 'severity-index'
-  }
-];
+  const aimsIndicators = [
+    {
+      id: 'ind_iccs_v3',
+      name: 'Internal Corruption Control Systems (ICCS)',
+      weight: 32,
+      category: 'integrity_promotion' as IndicatorCategory,
+      description: 'Functioning of the agency\'s four core integrity systems (Complaint, CoI, Gift, Proactive)',
+      maxScore: 32,
+      subsystems: ['Complaint', 'CoI', 'Gift', 'Proactive']
+    },
+    {
+      id: 'ind_training_v3',
+      name: 'Integrity Capacity Building',
+      weight: 24,
+      category: 'integrity_promotion' as IndicatorCategory,
+      description: 'Staff completion of ACC\'s e-Learning course',
+      maxScore: 24,
+      scoringType: 'percentage-range'
+    },
+    {
+      id: 'ind_ad_v3',
+      name: 'Asset Declaration (AD) Compliance',
+      weight: 14,
+      category: 'integrity_promotion' as IndicatorCategory,
+      description: '% of covered officials submitting AD on time',
+      maxScore: 14,
+      scoringType: 'percentage-range'
+    },
+    {
+      id: 'ind_coc_v3',
+      name: 'Code of Conduct Awareness & Application',
+      weight: 10,
+      category: 'integrity_promotion' as IndicatorCategory,
+      description: 'Integration of Code of Conduct into agency culture',
+      maxScore: 10
+    },
+    {
+      id: 'ind_cases_v3',
+      name: 'Corruption Case Severity & Resolution',
+      weight: 20,
+      category: 'corruption_accountability' as IndicatorCategory,
+      description: 'Weighted severity of corruption cases involving agency staff',
+      maxScore: 20,
+      scoringType: 'severity-index'
+    }
+  ];
 
   const tabs = [
     { id: 'weights', label: 'Indicator Weights', icon: CalculatorIcon },
@@ -2046,8 +2041,8 @@ const createEmptyTemplate = (): FormTemplate => {
         )}
 
         {activeTab === 'scoring-rules' && (
-  <ScoringRulesTab />
-)}
+          <ScoringRulesTab />
+        )}
 
         {activeTab === 'maturity' && (
           <MaturityFrameworkTab

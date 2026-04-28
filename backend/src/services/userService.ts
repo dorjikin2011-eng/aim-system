@@ -1,7 +1,7 @@
 // backend/src/services/userService.ts
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { getDB, getAsync, runAsync, allAsync } from '../models/db';
+import db from '../models/db'; // PostgreSQL Pool instance
 import { User, UserRole } from '../types/user';
 
 interface DBUser {
@@ -17,7 +17,7 @@ interface DBUser {
   last_login?: string;
   login_attempts?: number;
   lock_until?: string;
-  is_active?: number;
+  is_active?: boolean;
   department?: string;
   phone?: string;
   profile_image?: string;
@@ -26,52 +26,31 @@ interface DBUser {
 }
 
 export class UserService {
-  // Find user by email
+
+  /** -------------------- USER FINDING -------------------- */
+
   static async findByEmail(email: string): Promise<User | null> {
-    const db = getDB();
-    const searchEmail = email.toLowerCase();
-    
-    console.log('Search email:', searchEmail);
-    
-    // List all users to see what's in the database
-    try {
-      const allUsers = await allAsync<any[]>(
-        db,
-        'SELECT email, LENGTH(email) as len FROM users',
-        []
-      );
-      console.log('All users in database:', allUsers);
-    } catch (error) {
-      console.error('Failed to get all users:', error);
-    }
-    
-    // Get user with proper async
-    const user = await getAsync<DBUser>(
-      db, 
-      'SELECT * FROM users WHERE email = ?', 
-      [searchEmail]
+    const result = await db.query<DBUser>(
+      'SELECT * FROM users WHERE email = $1',
+      [email.toLowerCase()]
     );
-    
+    const user = result.rows[0];
     if (!user) return null;
-    
     return this.mapDBUserToUser(user);
   }
 
-  // Find user by ID
   static async findById(id: string): Promise<User | null> {
-    const db = getDB();
-    const user = await getAsync<DBUser>(
-      db, 
-      'SELECT * FROM users WHERE id = ?', 
+    const result = await db.query<DBUser>(
+      'SELECT * FROM users WHERE id = $1',
       [id]
     );
-    
+    const user = result.rows[0];
     if (!user) return null;
-    
     return this.mapDBUserToUser(user);
   }
 
-  // Create new user
+  /** -------------------- USER CREATION -------------------- */
+
   static async create(userData: {
     email: string;
     password: string;
@@ -81,26 +60,25 @@ export class UserService {
     department?: string;
     phone?: string;
   }): Promise<User> {
-    const db = getDB();
     const id = crypto.randomUUID();
     const hashedPassword = await bcrypt.hash(userData.password, 10);
-    
-    await runAsync(db, `
-      INSERT INTO users (
-        id, email, name, role, password_hash, 
-        agency_id, department, phone, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      id,
-      userData.email.toLowerCase(),
-      userData.name,
-      userData.role,
-      hashedPassword,
-      userData.agency_id || null,
-      userData.department || null,
-      userData.phone || null,
-      1
-    ]);
+
+    await db.query(
+      `INSERT INTO users 
+        (id, email, name, role, password_hash, agency_id, department, phone, is_active, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())`,
+      [
+        id,
+        userData.email.toLowerCase(),
+        userData.name,
+        userData.role,
+        hashedPassword,
+        userData.agency_id || null,
+        userData.department || null,
+        userData.phone || null,
+        true
+      ]
+    );
 
     return {
       id,
@@ -114,347 +92,258 @@ export class UserService {
     };
   }
 
-  // Update user password
+  /** -------------------- PASSWORD HANDLING -------------------- */
+
   static async updatePassword(userId: string, newPassword: string): Promise<void> {
-    const db = getDB();
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
-    await runAsync(db, `
-      UPDATE users 
-      SET password_hash = ?, 
-          password_reset_token = NULL,
-          password_reset_expires = NULL,
-          last_password_change = CURRENT_TIMESTAMP,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [hashedPassword, userId]);
+    await db.query(
+      `UPDATE users
+       SET password_hash = $1,
+           password_reset_token = NULL,
+           password_reset_expires = NULL,
+           last_password_change = NOW(),
+           updated_at = NOW()
+       WHERE id = $2`,
+      [hashedPassword, userId]
+    );
   }
 
-  // Set password reset token in users table
+  static async verifyPassword(userId: string, password: string): Promise<boolean> {
+    const user = await this.findById(userId);
+    if (!user) return false;
+    return bcrypt.compare(password, user.password_hash);
+  }
+
+  static async verifyPasswordByEmail(email: string, password: string): Promise<boolean> {
+    const user = await this.findByEmail(email);
+    if (!user) return false;
+    return bcrypt.compare(password, user.password_hash);
+  }
+
+  /** -------------------- PASSWORD RESET -------------------- */
+
   static async setPasswordResetToken(email: string, token: string): Promise<void> {
-    const db = getDB();
     const expiresAt = new Date(Date.now() + 3600000); // 1 hour
-    
-    await runAsync(db, `
-      UPDATE users 
-      SET password_reset_token = ?,
-          password_reset_expires = ?
-      WHERE email = ?
-    `, [token, expiresAt.toISOString(), email.toLowerCase()]);
+    await db.query(
+      `UPDATE users
+       SET password_reset_token = $1,
+           password_reset_expires = $2
+       WHERE email = $3`,
+      [token, expiresAt.toISOString(), email.toLowerCase()]
+    );
   }
 
-  // Store reset token in password_reset_tokens table
   static async storeResetToken(email: string, token: string): Promise<void> {
-    const db = getDB();
     const id = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 3600000); // 1 hour
-    
-    await runAsync(db, `
-      INSERT OR REPLACE INTO password_reset_tokens (id, token, email, expires_at)
-      VALUES (?, ?, ?, ?)
-    `, [id, token, email.toLowerCase(), expiresAt.toISOString()]);
+
+    await db.query(
+      `INSERT INTO password_reset_tokens (id, token, email, expires_at, used)
+       VALUES ($1,$2,$3,$4,false)
+       ON CONFLICT (email) DO UPDATE
+       SET token = EXCLUDED.token,
+           expires_at = EXCLUDED.expires_at,
+           used = false`,
+      [id, token, email.toLowerCase(), expiresAt.toISOString()]
+    );
   }
 
-  // Validate password reset token from password_reset_tokens table
   static async validateResetToken(token: string): Promise<{ email: string; isValid: boolean }> {
-    const db = getDB();
-    
-    const tokenRecord = await getAsync<any>(db, `
-      SELECT token, email, expires_at, used 
-      FROM password_reset_tokens 
-      WHERE token = ? AND used = 0
-    `, [token]);
-    
-    if (!tokenRecord) {
-      return { email: '', isValid: false };
-    }
-    
-    const expiresAt = new Date(tokenRecord.expires_at);
-    const isValid = expiresAt > new Date();
-    
-    return { 
-      email: tokenRecord.email, 
-      isValid 
+    const result = await db.query(
+      `SELECT token, email, expires_at, used
+       FROM password_reset_tokens
+       WHERE token = $1 AND used = false`,
+      [token]
+    );
+    const tokenRecord = result.rows[0];
+    if (!tokenRecord) return { email: '', isValid: false };
+    return {
+      email: tokenRecord.email,
+      isValid: new Date(tokenRecord.expires_at) > new Date()
     };
   }
 
-  // Mark reset token as used
   static async markTokenAsUsed(token: string): Promise<void> {
-    const db = getDB();
-    
-    await runAsync(db, `
-      UPDATE password_reset_tokens 
-      SET used = 1 
-      WHERE token = ?
-    `, [token]);
+    await db.query(
+      `UPDATE password_reset_tokens
+       SET used = true
+       WHERE token = $1`,
+      [token]
+    );
   }
 
-  // Clear password reset token from users table
   static async clearPasswordResetToken(email: string): Promise<void> {
-    const db = getDB();
-    
-    await runAsync(db, `
-      UPDATE users 
-      SET password_reset_token = NULL,
-          password_reset_expires = NULL
-      WHERE email = ?
-    `, [email.toLowerCase()]);
-  }
-
-  // Verify password
-  static async verifyPassword(userId: string, password: string): Promise<boolean> {
-    const user = await this.findById(userId);
-    
-    if (!user) return false;
-    
-    return await bcrypt.compare(password, user.password_hash);
-  }
-
-  // Verify password by email
-  static async verifyPasswordByEmail(email: string, password: string): Promise<boolean> {
-    const user = await this.findByEmail(email);
-    
-    if (!user) {
-      console.log('verifyPasswordByEmail: User not found');
-      return false;
-    }
-    
-    console.log('verifyPasswordByEmail - User found:', user.email);
-    console.log('verifyPasswordByEmail - Password provided:', password);
-    console.log('verifyPasswordByEmail - Stored hash length:', user.password_hash?.length);
-    
-    // Check if hash looks like a bcrypt hash
-    const isBcryptHash = user.password_hash?.startsWith('$2a$') || 
-                         user.password_hash?.startsWith('$2b$') || 
-                         user.password_hash?.startsWith('$2y$');
-    console.log('verifyPasswordByEmail - Looks like bcrypt hash:', isBcryptHash);
-    
-    const result = await bcrypt.compare(password, user.password_hash);
-    console.log('verifyPasswordByEmail - bcrypt.compare result:', result);
-    
-    return result;
-  }
-
-  // Update last login
-  static async updateLastLogin(userId: string): Promise<void> {
-    const db = getDB();
-    
-    await runAsync(db, `
-      UPDATE users 
-      SET last_login = CURRENT_TIMESTAMP,
-          login_attempts = 0,
-          lock_until = NULL
-      WHERE id = ?
-    `, [userId]);
-  }
-
-  // Increment login attempts
-  static async incrementLoginAttempts(email: string): Promise<void> {
-    const db = getDB();
-    
-    // Get current attempts
-    const user = await getAsync<DBUser>(
-      db, 
-      'SELECT login_attempts, lock_until FROM users WHERE email = ?', 
+    await db.query(
+      `UPDATE users
+       SET password_reset_token = NULL,
+           password_reset_expires = NULL
+       WHERE email = $1`,
       [email.toLowerCase()]
     );
-    
+  }
+
+  /** -------------------- LOGIN & LOCK -------------------- */
+
+  static async updateLastLogin(userId: string): Promise<void> {
+    await db.query(
+      `UPDATE users
+       SET last_login = NOW(),
+           login_attempts = 0,
+           lock_until = NULL
+       WHERE id = $1`,
+      [userId]
+    );
+  }
+
+  static async incrementLoginAttempts(email: string): Promise<void> {
+    const result = await db.query(
+      `SELECT login_attempts, lock_until
+       FROM users
+       WHERE email = $1`,
+      [email.toLowerCase()]
+    );
+
+    const user = result.rows[0];
     if (!user) return;
-    
+
     let attempts = (user.login_attempts || 0) + 1;
-    let lockUntil = user.lock_until || null;
-    
-    // Check if lock has expired
+    let lockUntil: string | null = user.lock_until;
+
     if (lockUntil && new Date(lockUntil) < new Date()) {
       attempts = 1;
       lockUntil = null;
     }
-    
-    // Lock account after 5 failed attempts (30 minutes lock)
+
     if (attempts >= 5) {
       lockUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString();
     }
-    
-    await runAsync(db, `
-      UPDATE users 
-      SET login_attempts = ?,
-          lock_until = ?
-      WHERE email = ?
-    `, [attempts, lockUntil, email.toLowerCase()]);
+
+    await db.query(
+      `UPDATE users
+       SET login_attempts = $1,
+           lock_until = $2
+       WHERE email = $3`,
+      [attempts, lockUntil, email.toLowerCase()]
+    );
   }
 
-  // Check if account is locked
   static async isAccountLocked(email: string): Promise<boolean> {
-    const db = getDB();
-    const user = await getAsync<DBUser>(db, `
-      SELECT lock_until FROM users WHERE email = ?
-    `, [email.toLowerCase()]);
-    
+    const result = await db.query(
+      `SELECT lock_until FROM users WHERE email = $1`,
+      [email.toLowerCase()]
+    );
+    const user = result.rows[0];
     if (!user || !user.lock_until) return false;
-    
-    const lockUntil = new Date(user.lock_until);
-    return lockUntil > new Date();
+    return new Date(user.lock_until) > new Date();
   }
 
-  // Get lock time remaining (in minutes)
   static async getLockTimeRemaining(email: string): Promise<number> {
-    const db = getDB();
-    const user = await getAsync<DBUser>(db, `
-      SELECT lock_until FROM users WHERE email = ?
-    `, [email.toLowerCase()]);
-    
+    const result = await db.query(
+      `SELECT lock_until FROM users WHERE email = $1`,
+      [email.toLowerCase()]
+    );
+    const user = result.rows[0];
     if (!user || !user.lock_until) return 0;
-    
-    const lockUntil = new Date(user.lock_until);
-    const now = new Date();
-    
-    if (lockUntil <= now) return 0;
-    
-    return Math.ceil((lockUntil.getTime() - now.getTime()) / 60000);
+    const diff = new Date(user.lock_until).getTime() - Date.now();
+    return diff > 0 ? Math.ceil(diff / 60000) : 0;
   }
 
-  // Map database user to User type
-  private static mapDBUserToUser(dbUser: DBUser): User {
-    return {
-      id: dbUser.id,
-      email: dbUser.email,
-      name: dbUser.name,
-      role: dbUser.role,
-      agency_id: dbUser.agency_id,
-      password_hash: dbUser.password_hash,
-      password_reset_token: dbUser.password_reset_token,
-      password_reset_expires: dbUser.password_reset_expires,
-      last_password_change: dbUser.last_password_change,
-      last_login: dbUser.last_login,
-      login_attempts: dbUser.login_attempts,
-      lock_until: dbUser.lock_until,
-      is_active: dbUser.is_active === 1,
-      department: dbUser.department,
-      phone: dbUser.phone,
-      profile_image: dbUser.profile_image,
-      created_at: dbUser.created_at,
-      updated_at: dbUser.updated_at
-    };
-  }
+  /** -------------------- PROFILE -------------------- */
 
-  // Get user for auth (without sensitive info)
-  static async getAuthUser(email: string): Promise<any> {
-    const db = getDB();
-    const user = await getAsync<any>(db, `
-      SELECT id, email, name, role, agency_id, department, phone, profile_image
-      FROM users WHERE email = ? AND is_active = 1
-    `, [email.toLowerCase()]);
-    
-    return user;
-  }
-
-  // Get user for auth by ID (without sensitive info)
-  static async getAuthUserById(id: string): Promise<any> {
-    const db = getDB();
-    const user = await getAsync<any>(db, `
-      SELECT id, email, name, role, agency_id, department, phone, profile_image
-      FROM users WHERE id = ? AND is_active = 1
-    `, [id]);
-    
-    return user;
-  }
-
-  // Update user profile
   static async updateProfile(userId: string, profileData: {
     name?: string;
     department?: string;
     phone?: string;
     profile_image?: string;
   }): Promise<void> {
-    const db = getDB();
-    
     const updates: string[] = [];
     const params: any[] = [];
-    
-    if (profileData.name !== undefined) {
-      updates.push('name = ?');
-      params.push(profileData.name);
-    }
-    
-    if (profileData.department !== undefined) {
-      updates.push('department = ?');
-      params.push(profileData.department);
-    }
-    
-    if (profileData.phone !== undefined) {
-      updates.push('phone = ?');
-      params.push(profileData.phone);
-    }
-    
-    if (profileData.profile_image !== undefined) {
-      updates.push('profile_image = ?');
-      params.push(profileData.profile_image);
-    }
-    
+    let idx = 1;
+
+    if (profileData.name !== undefined) { updates.push(`name = $${idx++}`); params.push(profileData.name); }
+    if (profileData.department !== undefined) { updates.push(`department = $${idx++}`); params.push(profileData.department); }
+    if (profileData.phone !== undefined) { updates.push(`phone = $${idx++}`); params.push(profileData.phone); }
+    if (profileData.profile_image !== undefined) { updates.push(`profile_image = $${idx++}`); params.push(profileData.profile_image); }
+
     if (updates.length === 0) return;
-    
-    updates.push('updated_at = CURRENT_TIMESTAMP');
+
+    updates.push(`updated_at = NOW()`);
+    const query = `UPDATE users SET ${updates.join(', ')} WHERE id = $${idx}`;
     params.push(userId);
-    
-    await runAsync(db, `
-      UPDATE users 
-      SET ${updates.join(', ')}
-      WHERE id = ?
-    `, params);
+
+    await db.query(query, params);
   }
 
-  // Deactivate user account
+  /** -------------------- ACCOUNT STATUS -------------------- */
+
   static async deactivateAccount(userId: string): Promise<void> {
-    const db = getDB();
-    
-    await runAsync(db, `
-      UPDATE users 
-      SET is_active = 0,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [userId]);
+    await db.query(
+      `UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1`,
+      [userId]
+    );
   }
 
-  // Reactivate user account
   static async reactivateAccount(userId: string): Promise<void> {
-    const db = getDB();
-    
-    await runAsync(db, `
-      UPDATE users 
-      SET is_active = 1,
-          login_attempts = 0,
-          lock_until = NULL,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `, [userId]);
+    await db.query(
+      `UPDATE users
+       SET is_active = true,
+           login_attempts = 0,
+           lock_until = NULL,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [userId]
+    );
   }
 
-  // Get all users (for admin)
+  /** -------------------- AUTH USER -------------------- */
+
+  static async getAuthUser(email: string): Promise<any> {
+    const result = await db.query(
+      `SELECT id, email, name, role, agency_id, department, phone, profile_image
+       FROM users
+       WHERE email = $1 AND is_active = true`,
+      [email.toLowerCase()]
+    );
+    return result.rows[0] || null;
+  }
+
+  static async getAuthUserById(id: string): Promise<any> {
+    const result = await db.query(
+      `SELECT id, email, name, role, agency_id, department, phone, profile_image
+       FROM users
+       WHERE id = $1 AND is_active = true`,
+      [id]
+    );
+    return result.rows[0] || null;
+  }
+
+  /** -------------------- ADMIN USER LIST -------------------- */
+
   static async getAllUsers(): Promise<User[]> {
-    const db = getDB();
-    const users = await allAsync<DBUser[]>(
-      db, 
-      'SELECT * FROM users ORDER BY created_at DESC',
-      []
+    const result = await db.query<DBUser>(
+      `SELECT * FROM users ORDER BY created_at DESC`
     );
-    
-    return users.map(user => this.mapDBUserToUser(user));
+    return result.rows.map(this.mapDBUserToUser);
   }
 
-  // Search users
   static async searchUsers(query: string): Promise<User[]> {
-    const db = getDB();
     const searchTerm = `%${query}%`;
-    
-    const users = await allAsync<DBUser[]>(
-      db, 
-      `SELECT * FROM users 
-       WHERE name LIKE ? OR email LIKE ? OR department LIKE ?
+    const result = await db.query<DBUser>(
+      `SELECT * FROM users
+       WHERE name ILIKE $1 OR email ILIKE $1 OR department ILIKE $1
        ORDER BY name`,
-      [searchTerm, searchTerm, searchTerm]
+      [searchTerm]
     );
-    
-    return users.map(user => this.mapDBUserToUser(user));
+    return result.rows.map(this.mapDBUserToUser);
+  }
+
+  /** -------------------- UTILS -------------------- */
+
+  private static mapDBUserToUser(dbUser: DBUser): User {
+    return {
+      ...dbUser,
+      is_active: dbUser.is_active === true
+    };
   }
 }
 

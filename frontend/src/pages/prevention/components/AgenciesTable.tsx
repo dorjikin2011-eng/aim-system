@@ -1,4 +1,4 @@
-// frontend/src/pages/prevention/components/AgenciesTable.tsx - COMPLETE FIXED VERSION
+// frontend/src/pages/prevention/components/AgenciesTable.tsx - COMPLETE FIXED VERSION WITH FISCAL YEAR
 import React, { useState } from 'react';
 
 import { 
@@ -31,7 +31,8 @@ interface AgenciesTableProps {
   onViewAgency: (agencyId: string) => void;
   onFinalizeAssessment?: (agencyId: string) => void;
   onUnlockAssessment?: (agencyId: string) => void;
-  onViewReport?: (agencyId: string) => void; // ADD THIS NEW PROP
+  onViewReport?: (agencyId: string) => void;
+  fiscalYear?: string;  // ← ADDED: Optional fiscal year prop
 }
 
 const statusBadge = (status: string) => {
@@ -78,10 +79,11 @@ export default function AgenciesTable({
   onViewAgency, 
   onFinalizeAssessment, 
   onUnlockAssessment,
-  onViewReport // ADD THIS
+  onViewReport,
+  fiscalYear  // ← ADDED
 }: AgenciesTableProps) {
   
-  const [expandedRow] = useState<string | null>(null);
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [sortField, setSortField] = useState<'name' | 'status' | 'score' | 'last_updated'>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
@@ -124,6 +126,10 @@ export default function AgenciesTable({
     }
   };
 
+  const handleRowClick = (agencyId: string) => {
+    setExpandedRow(expandedRow === agencyId ? null : agencyId);
+  };
+
   const getProgress = (agency: AgencyItem) => {
     if (agency.progress !== undefined) return agency.progress;
     if (agency.status === 'FINALIZED' || agency.status === 'VALIDATED') return 100;
@@ -139,7 +145,6 @@ export default function AgenciesTable({
       case 'VALIDATED':
         return (
           <div className="flex space-x-2">
-            {/* FIXED: Use onViewReport for the Report button */}
             <button
               onClick={() => onViewReport ? onViewReport(agency.id) : onViewAgency(agency.id)}
               className="flex items-center px-3 py-1.5 bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 text-sm"
@@ -221,7 +226,9 @@ export default function AgenciesTable({
     <div className="bg-white shadow rounded-lg overflow-hidden">
       <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
         <div className="flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-gray-900">Assigned Agencies</h3>
+          <h3 className="text-lg font-semibold text-gray-900">
+            Assigned Agencies {fiscalYear && <span className="text-sm font-normal text-gray-500">for FY {fiscalYear}</span>}
+          </h3>
           <div className="text-sm text-gray-500">
             {sortedAgencies.length} agency{sortedAgencies.length !== 1 ? 's' : ''}
           </div>
@@ -298,19 +305,22 @@ export default function AgenciesTable({
           <tbody className="bg-white divide-y divide-gray-200">
             {sortedAgencies.map((agency) => (
               <React.Fragment key={agency.id}>
-                <tr className="hover:bg-gray-50">
+                <tr 
+                  className="hover:bg-gray-50 cursor-pointer"
+                  onClick={() => handleRowClick(agency.id)}
+                >
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="font-medium text-gray-900">{agency.name}</div>
                     <div className="text-sm text-gray-500">{agency.sector}</div>
-                  </td>
+                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {statusBadge(agency.status)}
-                  </td>
+                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-lg font-semibold text-gray-900">
                       {agency.score !== undefined ? `${agency.score.toFixed(1)}/100` : '--'}
                     </div>
-                  </td>
+                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
                       <div className="w-32 bg-gray-200 rounded-full h-2 mr-3">
@@ -324,19 +334,19 @@ export default function AgenciesTable({
                       </div>
                       <span className="text-sm text-gray-600">{getProgress(agency)}%</span>
                     </div>
-                  </td>
+                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-2 py-1 text-xs rounded-full ${riskLevelColor(agency.riskLevel)}`}>
                       {agency.riskLevel || 'Medium'}
                     </span>
-                  </td>
+                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {agency.last_updated ? new Date(agency.last_updated).toLocaleDateString() : '--'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     {getActionButton(agency)}
-                  </td>
-                </tr>
+                   </td>
+                 </tr>
                 {expandedRow === agency.id && (
                   <tr className="bg-blue-50">
                     <td colSpan={7} className="px-6 py-4">
@@ -345,7 +355,7 @@ export default function AgenciesTable({
                         <p className="mb-3">{agency.officer_remarks || 'No remarks provided.'}</p>
                         <div className="grid grid-cols-2 gap-4 text-xs">
                           <div>
-                            <span className="font-medium">Fiscal Year:</span> {agency.fiscal_year || '--'}
+                            <span className="font-medium">Fiscal Year:</span> {agency.fiscal_year || fiscalYear || '--'}
                           </div>
                           <div>
                             <span className="font-medium">Assigned Officer:</span> {agency.assigned_officer || '--'}
@@ -353,7 +363,7 @@ export default function AgenciesTable({
                         </div>
                       </div>
                     </td>
-                  </tr>
+                   </tr>
                 )}
               </React.Fragment>
             ))}
@@ -364,7 +374,7 @@ export default function AgenciesTable({
       {sortedAgencies.length === 0 && (
         <div className="text-center py-8">
           <div className="text-gray-400 text-4xl mb-2">📋</div>
-          <p className="text-gray-500">No agencies assigned</p>
+          <p className="text-gray-500">No agencies assigned{fiscalYear ? ` for FY ${fiscalYear}` : ''}</p>
           <p className="text-sm text-gray-400 mt-1">Contact your administrator to get assigned agencies</p>
         </div>
       )}

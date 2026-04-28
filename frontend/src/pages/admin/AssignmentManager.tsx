@@ -1,4 +1,4 @@
-// frontend/src/pages/admin/AssignmentManager.tsx - CORRECTED
+// frontend/src/pages/admin/AssignmentManager.tsx - UPDATED WITH FY SUPPORT
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE } from '../../config';
@@ -9,7 +9,8 @@ import {
   PlusCircleIcon,
   TrashIcon,
   EyeIcon,
-  ChartBarIcon
+  ChartBarIcon,
+  CalendarIcon
 } from '@heroicons/react/24/outline';
 
 interface PreventionOfficer {
@@ -41,6 +42,7 @@ interface Assignment {
   assigned_at: string;
   notes?: string;
   status: string;
+  fiscal_year?: string;  // ← ADDED
 }
 
 interface AssignmentStats {
@@ -65,26 +67,52 @@ export default function AssignmentManager() {
   const [assignmentNotes, setAssignmentNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   
+  // Fiscal Year State
+  const [selectedFY, setSelectedFY] = useState<string>(() => {
+    const currentYear = new Date().getFullYear();
+    return `${currentYear}-${(currentYear + 1).toString().slice(-2)}`;
+  });
+  
   const navigate = useNavigate();
+
+  // Generate available fiscal years (past 2, current, next 2)
+  const generateFiscalYears = () => {
+    const currentYear = new Date().getFullYear();
+    const years = [];
+    for (let i = -2; i <= 2; i++) {
+      const startYear = currentYear + i;
+      const endYear = startYear + 1;
+      years.push(`${startYear}-${endYear.toString().slice(-2)}`);
+    }
+    return years;
+  };
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [selectedFY]); // Re-fetch when FY changes
 
   const fetchData = async () => {
     setLoading(true);
     setError('');
     
     try {
+      const token = localStorage.getItem('token');
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` })
+      };
+
       const [officersRes, agenciesRes, assignmentsRes, statsRes] = await Promise.all([
-        fetch('${API_BASE}/api/admin/assignments/available-officers'),
-        fetch('${API_BASE}/api/admin/assignments/unassigned-agencies'),
-        fetch('${API_BASE}/api/admin/assignments'),
-        fetch('${API_BASE}/api/admin/assignments/stats')
+        fetch(`${API_BASE}/api/admin/assignments/available-officers`, { credentials: 'include', headers }),
+        fetch(`${API_BASE}/api/admin/assignments/unassigned-agencies`, { credentials: 'include', headers }),
+        fetch(`${API_BASE}/api/admin/assignments/by-fy/${selectedFY}`, { credentials: 'include', headers }), // ← UPDATED: FY-specific
+        fetch(`${API_BASE}/api/admin/assignments/stats`, { credentials: 'include', headers })
       ]);
 
       if (!officersRes.ok || !agenciesRes.ok || !assignmentsRes.ok || !statsRes.ok) {
-        throw new Error('Failed to fetch assignment data');
+        const errorMsg = 'Failed to fetch assignment data';
+        console.error(errorMsg);
+        throw new Error(errorMsg);
       }
 
       const officersData = await officersRes.json();
@@ -92,12 +120,13 @@ export default function AssignmentManager() {
       const assignmentsData = await assignmentsRes.json();
       const statsData = await statsRes.json();
 
-      if (officersData.success) setOfficers(officersData.officers);
-      if (agenciesData.success) setAgencies(agenciesData.agencies);
-      if (assignmentsData.success) setAssignments(assignmentsData.assignments);
-      if (statsData.success) setStats(statsData.stats);
+      if (officersData.success !== false) setOfficers(officersData.officers || officersData.data || []);
+      if (agenciesData.success !== false) setAgencies(agenciesData.agencies || agenciesData.data || []);
+      if (assignmentsData.success !== false) setAssignments(assignmentsData.assignments || assignmentsData.data || []);
+      if (statsData.success !== false) setStats(statsData.stats || statsData.data || null);
 
     } catch (err: any) {
+      console.error('Fetch error:', err);
       setError(err.message || 'Failed to load assignment data');
     } finally {
       setLoading(false);
@@ -114,14 +143,21 @@ export default function AssignmentManager() {
 
     setSubmitting(true);
     setError('');
+    setSuccessMessage('');
     
     try {
-      const response = await fetch('${API_BASE}/api/admin/assignments', {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE}/api/admin/assignments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        },
         body: JSON.stringify({
           prevention_officer_id: selectedOfficer,
           agency_id: selectedAgency,
+          fiscal_year: selectedFY, // ← ADDED: Include fiscal year
           notes: assignmentNotes
         })
       });
@@ -129,19 +165,22 @@ export default function AssignmentManager() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to assign agency');
+        throw new Error(data.error || data.message || 'Failed to assign agency');
       }
 
-      if (data.success) {
-        setSuccessMessage(`Agency assigned successfully!`);
+      if (data.success || data.id) {
+        setSuccessMessage(`✅ Agency assigned successfully for FY ${selectedFY}!`);
         setSelectedOfficer('');
         setSelectedAgency('');
         setAssignmentNotes('');
-        fetchData();
+        await fetchData();
         setTimeout(() => setActiveTab('view'), 1500);
+      } else {
+        throw new Error(data.error || 'Assignment failed');
       }
 
     } catch (err: any) {
+      console.error('Assignment error:', err);
       setError(err.message || 'Failed to assign agency');
     } finally {
       setSubmitting(false);
@@ -149,27 +188,36 @@ export default function AssignmentManager() {
   };
 
   const handleDeleteAssignment = async (assignmentId: string) => {
-    if (!confirm('Are you sure you want to remove this assignment?')) return;
+    if (!confirm('⚠️ Are you sure you want to remove this assignment?')) return;
 
     try {
+      const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE}/api/admin/assignments/${assignmentId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        }
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to remove assignment');
+        throw new Error(data.error || data.message || 'Failed to remove assignment');
       }
 
       if (data.success) {
-        setSuccessMessage('Assignment removed successfully');
+        setSuccessMessage('✅ Assignment removed successfully');
         setAssignments(assignments.filter(a => a.id !== assignmentId));
-        fetchData();
+        await fetchData();
+        setTimeout(() => setSuccessMessage(''), 3000);
       }
 
     } catch (err: any) {
+      console.error('Delete error:', err);
       setError(err.message || 'Failed to remove assignment');
+      setTimeout(() => setError(''), 3000);
     }
   };
 
@@ -264,15 +312,35 @@ export default function AssignmentManager() {
         </div>
       )}
 
+      {/* Fiscal Year Selector */}
+      <div className="mb-6 flex items-center justify-between bg-white p-4 rounded-lg shadow border">
+        <div className="flex items-center space-x-4">
+          <CalendarIcon className="h-5 w-5 text-gray-500" />
+          <label className="text-sm font-medium text-gray-700">Fiscal Year:</label>
+          <select
+            value={selectedFY}
+            onChange={(e) => setSelectedFY(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+          >
+            {generateFiscalYears().map(fy => (
+              <option key={fy} value={fy}>{fy}</option>
+            ))}
+          </select>
+        </div>
+        <div className="text-sm text-gray-500">
+          Showing assignments for FY {selectedFY}
+        </div>
+      </div>
+
       {error && (
-        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md">
+        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md border border-red-200">
           <p className="font-medium">Error:</p>
           <p>{error}</p>
         </div>
       )}
 
       {successMessage && (
-        <div className="mb-4 p-3 bg-green-100 text-green-700 rounded-md">
+        <div className="mb-4 p-3 bg-green-100 text-green-700 rounded-md border border-green-200">
           <p className="font-medium">Success:</p>
           <p>{successMessage}</p>
         </div>
@@ -307,7 +375,7 @@ export default function AssignmentManager() {
       <div className="bg-white rounded-lg shadow p-6">
         {activeTab === 'assign' && (
           <div>
-            <h2 className="text-lg font-semibold mb-4">Assign Agency to Prevention Officer</h2>
+            <h2 className="text-lg font-semibold mb-4">Assign Agency to Prevention Officer for FY {selectedFY}</h2>
             
             <form onSubmit={handleAssignAgency} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -391,7 +459,7 @@ export default function AssignmentManager() {
                   ) : (
                     <>
                       <PlusCircleIcon className="h-5 w-5 mr-2" />
-                      Assign Agency
+                      Assign Agency for FY {selectedFY}
                     </>
                   )}
                 </button>
@@ -403,10 +471,12 @@ export default function AssignmentManager() {
                 <div className="text-center p-3 bg-gray-50 rounded">
                   <p className="text-sm text-gray-600">Available Officers</p>
                   <p className="text-xl font-semibold">{officers.length}</p>
+                  <p className="text-xs text-gray-500 mt-1">For FY {selectedFY}</p>
                 </div>
                 <div className="text-center p-3 bg-gray-50 rounded">
                   <p className="text-sm text-gray-600">Unassigned Agencies</p>
                   <p className="text-xl font-semibold">{agencies.length}</p>
+                  <p className="text-xs text-gray-500 mt-1">For FY {selectedFY}</p>
                 </div>
               </div>
             </div>
@@ -416,7 +486,7 @@ export default function AssignmentManager() {
         {activeTab === 'view' && (
           <div>
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold">Current Assignments</h2>
+              <h2 className="text-lg font-semibold">Assignments for FY {selectedFY}</h2>
               <button
                 onClick={fetchData}
                 className="text-sm text-blue-600 hover:text-blue-800"
@@ -428,7 +498,8 @@ export default function AssignmentManager() {
             {assignments.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 <ClipboardIcon className="h-12 w-12 mx-auto mb-3 text-gray-400" />
-                <p>No assignments found. Assign an agency to get started.</p>
+                <p>No assignments found for FY {selectedFY}.</p>
+                <p className="text-sm mt-2">Go to the Assign tab to create assignments.</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -437,6 +508,7 @@ export default function AssignmentManager() {
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Officer</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Agency</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fiscal Year</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Assigned By</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
@@ -457,6 +529,11 @@ export default function AssignmentManager() {
                             <p className="font-medium">{assignment.agency_name}</p>
                             <p className="text-sm text-gray-500">{assignment.agency_sector}</p>
                           </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                            {assignment.fiscal_year || selectedFY}
+                          </span>
                         </td>
                         <td className="px-4 py-3">
                           <p className="text-sm">{assignment.assigned_by_name}</p>
@@ -495,7 +572,7 @@ export default function AssignmentManager() {
 
         {activeTab === 'stats' && (
           <div>
-            <h2 className="text-lg font-semibold mb-4">Workload Distribution</h2>
+            <h2 className="text-lg font-semibold mb-4">Workload Distribution for FY {selectedFY}</h2>
             
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div>
@@ -541,7 +618,7 @@ export default function AssignmentManager() {
                                   ? 'bg-green-100 text-green-800'
                                   : assignedCount <= 5
                                   ? 'bg-yellow-100 text-yellow-800'
-                                  : 'bg-red-100 text-red-800'  // <-- ADD THIS LINE
+                                  : 'bg-red-100 text-red-800'
                               }`}>
                                 {assignedCount === 0 ? 'Available' : 
                                  assignedCount <= 3 ? 'Good' : 
@@ -557,26 +634,26 @@ export default function AssignmentManager() {
               </div>
 
               <div>
-                <h3 className="font-medium text-gray-900 mb-3">Agency Assignment Status</h3>
+                <h3 className="font-medium text-gray-900 mb-3">Agency Assignment Status for FY {selectedFY}</h3>
                 <div className="space-y-4">
                   <div className="p-4 bg-blue-50 rounded-lg">
                     <div className="flex justify-between items-center mb-2">
                       <span className="font-medium">Assigned Agencies</span>
-                      <span className="text-xl font-bold">{stats?.assigned_agencies || 0}</span>
+                      <span className="text-xl font-bold">{assignments.length}</span>
                     </div>
                     <div className="w-full bg-blue-200 rounded-full h-2">
                       <div 
                         className="bg-blue-600 h-2 rounded-full"
                         style={{ 
                           width: stats && stats.total_agencies > 0 
-                            ? `${(stats.assigned_agencies / stats.total_agencies) * 100}%` 
+                            ? `${(assignments.length / stats.total_agencies) * 100}%` 
                             : '0%' 
                         }}
                       ></div>
                     </div>
                     <p className="text-sm text-blue-700 mt-2">
                       {stats && stats.total_agencies > 0 
-                        ? `${Math.round((stats.assigned_agencies / stats.total_agencies) * 100)}% of agencies assigned`
+                        ? `${Math.round((assignments.length / stats.total_agencies) * 100)}% of agencies assigned for FY ${selectedFY}`
                         : 'No agencies available'
                       }
                     </p>

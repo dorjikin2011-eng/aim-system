@@ -770,11 +770,52 @@ export async function saveAllAssessments(req: Request, res: Response) {
       console.log('✅ Updated assessment with indicator_scores:', assessmentId);
     }
 
-    // Also save to dynamic_assessment_responses for backward compatibility
+        // Also save to dynamic_assessment_responses for backward compatibility
+    // Store the complete response_data with all parameter values
     for (const [indicatorId, manualScore] of Object.entries(indicator_scores)) {
       const dbIndicatorId = indicatorIdMap[indicatorId] || indicatorId;
-      const responseDataItem = response_data?.[indicatorId] || {};
       const finalScore = typeof manualScore === 'number' ? manualScore : 0;
+      
+      // Build complete response data with all parameter values from flat response_data
+      let responseDataItem: Record<string, any> = {};
+      
+      // Check if response_data exists and extract parameter values
+      if (response_data && typeof response_data === 'object') {
+        // Flat structure from AgencyAssessmentPage - extract based on indicator
+        if (indicatorId === 'ind_iccs_v3') {
+          responseDataItem = {
+            complaint_level: response_data.complaint_level ?? 0,
+            coi_level: response_data.coi_level ?? 0,
+            gift_level: response_data.gift_level ?? 0,
+            proactive_level: response_data.proactive_level ?? 0
+          };
+        } else if (indicatorId === 'ind_training_v3') {
+          responseDataItem = {
+            total_employees: response_data.total_employees ?? 0,
+            completed_employees: response_data.completed_employees ?? 0
+          };
+        } else if (indicatorId === 'ind_ad_v3') {
+          responseDataItem = {
+            total_covered_officials: response_data.total_covered_officials ?? 0,
+            officials_submitted_on_time: response_data.officials_submitted_on_time ?? 0
+          };
+        } else if (indicatorId === 'ind_coc_v3') {
+          responseDataItem = {
+            coc_level: response_data.coc_level ?? 0
+          };
+        } else if (indicatorId === 'ind_cases_v3') {
+          responseDataItem = {
+            conviction_cases: Number(response_data.conviction_cases) || 0,
+            prosecution_cases: Number(response_data.prosecution_cases) || 0,
+            admin_action_cases: Number(response_data.admin_action_cases) || 0
+          };
+        } else {
+          // Fallback: use existing nested structure or empty object
+          responseDataItem = response_data[indicatorId] || {};
+        }
+      }
+      
+      console.log(`📝 Saving response_data for ${indicatorId}:`, JSON.stringify(responseDataItem, null, 2));
 
       const existingResponse = await getAsync<DynamicAssessmentResponseRow>(
         db,
@@ -797,7 +838,7 @@ export async function saveAllAssessments(req: Request, res: Response) {
             dbIndicatorId,
             JSON.stringify(responseDataItem),
             finalScore,
-            manualScore,
+            finalScore, // manual_score uses same value
             finalScore,
             JSON.stringify({ method: 'frontend_calculated', timestamp: new Date().toISOString() }),
             new Date().toISOString(),
@@ -805,6 +846,7 @@ export async function saveAllAssessments(req: Request, res: Response) {
             0
           ]
         );
+        console.log(`✅ Created response for ${indicatorId}`);
       } else {
         await runAsync(
           db,
@@ -818,13 +860,14 @@ export async function saveAllAssessments(req: Request, res: Response) {
           [
             JSON.stringify(responseDataItem),
             finalScore,
-            manualScore,
+            finalScore,
             finalScore,
             new Date().toISOString(),
             assessmentId,
             dbIndicatorId
           ]
         );
+        console.log(`✅ Updated response for ${indicatorId}`);
       }
     }
 
@@ -851,8 +894,7 @@ export async function saveAllAssessments(req: Request, res: Response) {
       details: err instanceof Error ? err.message : 'Unknown error'
     });
   }
-}
-
+};
 // ============================================
 // Calculate score for specific indicator
 // ============================================

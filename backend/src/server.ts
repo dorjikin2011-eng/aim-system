@@ -8,6 +8,8 @@ import session from 'express-session';
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { requireRole } from './middleware/auth';
+
 // Middleware
 import { attachSessionUser } from './middleware/sessionUser';
 
@@ -24,6 +26,7 @@ import adminConfigRoutes from './routes/adminConfigRoutes';
 import agencyDataRoutes from './routes/agencyDataRoutes';
 import formTemplatesRouter from './routes/formTemplates';
 import indicatorConfigRouter from './routes/indicatorConfig';
+import configRoutes from './routes/configRoutes';
 import assignmentRoutes from './routes/assignmentRoutes';
 import assessmentRoutes from './routes/assessmentRoutes';
 import evidenceRoutes from './routes/evidenceRoutes';
@@ -45,6 +48,8 @@ import { getSystemConfig } from './controllers/configController';
 import { pool, query, testConnection, closePool } from './models/db';
 
 const app = express();
+
+app.set('trust proxy', 1);
 
 /* -------------------- TEST DB CONNECTION -------------------- */
 let dbConnected = false;
@@ -74,25 +79,45 @@ app.use(
 );
 
 /* -------------------- CORS -------------------- */
-const allowedOrigins = (process.env.FRONTEND_URL || '').split(',').filter(origin => origin.trim());
+const allowedOrigins = (process.env.FRONTEND_URL || 'https://frontend-alpha-nine-65.vercel.app')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(origin => origin.length > 0);
 
+// Development fallback
 if (allowedOrigins.length === 0 && process.env.NODE_ENV !== 'production') {
   allowedOrigins.push('http://localhost:5173', 'http://localhost:3000');
+  console.log('🔓 CORS: Using development origins:', allowedOrigins);
+}
+
+// Production safety: Log warning if no origins configured
+if (allowedOrigins.length === 0 && process.env.NODE_ENV === 'production') {
+  console.warn('⚠️ CORS WARNING: No FRONTEND_URL set in production. All requests will be blocked!');
+  console.warn('⚠️ Set FRONTEND_URL in Vercel Backend → Settings → Environment Variables');
 }
 
 app.use(
   cors({
     origin: function (origin, callback) {
+      // Allow requests with no Origin header (server-to-server, curl, etc.)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) !== -1) {
+      
+      // Allow if in whitelist
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn(`CORS blocked: ${origin}`);
+      
+      // Log and block in production
+      if (process.env.NODE_ENV === 'production') {
+        console.warn(`🚫 CORS blocked in production: ${origin}`);
+        return callback(new Error(`CORS blocked: ${origin}`), false);
       }
-      return callback(new Error(`CORS blocked: ${origin}`), false);
+      
+      // In development: allow unknown origins with warning (for testing)
+      console.warn(`⚠️ CORS: Allowing unlisted origin in dev: ${origin}`);
+      return callback(null, true);
     },
-    credentials: true,
+    credentials: true, // ✅ Required for session cookies
   })
 );
 
@@ -116,6 +141,7 @@ app.use(
       secure: process.env.NODE_ENV === 'production',
       // ✅ 'none' allows cross-origin fetch requests to send cookies
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      domain: process.env.NODE_ENV === 'production' ? '.vercel.app' : undefined,
       maxAge: 24 * 60 * 60 * 1000,
     },
     store: new pgSession({
@@ -128,6 +154,20 @@ app.use(
     }),
   })
 );
+
+// TEST ENDPOINT - Check if session is persisting
+app.get('/api/test-session', (req, res) => {
+  console.log('🧪 Test session endpoint called');
+  console.log('Session ID:', req.sessionID);
+  console.log('Session user:', (req.session as any)?.user);
+  
+  res.json({ 
+    sessionID: req.sessionID,
+    hasUser: !!(req.session as any)?.user,
+    user: (req.session as any)?.user || null,
+    cookie: req.session?.cookie
+  });
+});
 
 /* -------------------- Attach session user -------------------- */
 app.use(attachSessionUser);
@@ -197,7 +237,6 @@ app.post('/api/fix-template', async (_req, res) => {
     );
 
     // Check template
-    // FIXED: query() returns rows array directly, not { rows }
     const templateRows = await query(
       `SELECT COUNT(*) FROM form_templates WHERE id = 'template_aims_assessment_v3'`
     );
@@ -243,6 +282,64 @@ const authMiddleware = (req: any, res: any, next: any) => {
   next();
 };
 
+/* -------------------- DEBUG ENDPOINT -------------------- */
+app.get('/api/debug-auth', (req, res) => {
+  const sessionUser = (req.session as any)?.user;
+  const reqUser = (req as any).user;
+  
+  res.json({
+    authenticated: !!reqUser,
+    sessionExists: !!req.session,
+    sessionUser: sessionUser ? {
+      email: sessionUser.email,
+      role: sessionUser.role
+    } : null,
+    reqUser: reqUser ? {
+      email: reqUser.email,
+      role: reqUser.role
+    } : null,
+    sessionID: req.sessionID
+  });
+});
+
+/* -------------------- DEBUG ROUTES -------------------- */
+app.get('/api/debug-routes', (req, res) => {
+  const routes: string[] = [];
+  
+  // Helper to extract routes from app
+  const extractRoutes = (stack: any, basePath: string = '') => {
+    stack.forEach((layer: any) => {
+      if (layer.route) {
+        // Route registered directly on app
+        const methods = Object.keys(layer.route.methods).join(', ').toUpperCase();
+        routes.push(`${methods} ${basePath}${layer.route.path}`);
+      } else if (layer.name === 'router' && layer.handle.stack) {
+        // Router middleware
+        const routerPath = layer.regexp.source
+          .replace('\\/?(?=\\/|$)', '')
+          .replace(/\\\//g, '/')
+          .replace(/\^/g, '')
+          .replace(/\?/g, '');
+        extractRoutes(layer.handle.stack, basePath + routerPath);
+      }
+    });
+  };
+  
+  extractRoutes(app._router.stack);
+  
+  // Filter to show only relevant routes
+  const relevantRoutes = routes.filter(r => 
+    r.includes('/prevention') || 
+    r.includes('/debug') ||
+    r.includes('/dashboard')
+  );
+  
+  res.json({
+    totalRoutes: routes.length,
+    relevantRoutes: relevantRoutes
+  });
+});
+
 /* -------------------- Protected Routes -------------------- */
 app.use('/api/admin', authMiddleware, adminRoutes);
 app.use('/api/admin/agencies', authMiddleware, adminAgencyRoutes);
@@ -251,6 +348,7 @@ app.use('/api/admin/logs', authMiddleware, adminLogRoutes);
 app.use('/api/admin/config', authMiddleware, adminConfigRoutes);
 app.use('/api/form-templates', authMiddleware, formTemplatesRouter);
 app.use('/api/indicator-config', authMiddleware, indicatorConfigRouter);
+app.use('/api/config', authMiddleware, configRoutes);
 app.use('/api/admin/focal-nominations', authMiddleware, focalNominationRoutes);
 app.use('/api/reports', authMiddleware, reportRoutes);
 app.use('/api/reports/export', authMiddleware, reportExportRoutes);
@@ -259,7 +357,7 @@ app.get('/api/agencies/:id', authMiddleware, getAgencyById);
 app.use('/api/admin/assignments', authMiddleware, assignmentRoutes);
 app.use('/api/assessments', authMiddleware, assessmentRoutes);
 app.use('/api/evidence', authMiddleware, evidenceRoutes);
-app.use('/api/prevention', authMiddleware, dashboardRoutes);
+app.use('/api/prevention', authMiddleware, requireRole(['prevention_officer', 'system_admin', 'commissioner', 'director']), dashboardRoutes);
 app.use('/api/focal', authMiddleware, focalRoutes);
 app.use('/api/hoa', authMiddleware, hoaRoutes);
 app.use('/api/commission', authMiddleware, commissionDashboardRoutes);
@@ -332,7 +430,6 @@ process.on('unhandledRejection', (reason, promise) => {
 const PORT = process.env.PORT || 3000;
 
 // Only listen when NOT in Vercel serverless environment
-// Vercel sets the VERCEL environment variable to 1
 const isVercel = process.env.VERCEL === '1';
 
 if (!isVercel) {

@@ -7,7 +7,8 @@ export type UserRole =
   | 'system_admin'
   | 'prevention_officer'
   | 'agency_head'
-  | 'focal_person';
+  | 'focal_person'
+  | 'viewer';
 
 export const VALID_ROLES: UserRole[] = [
   'commissioner',
@@ -15,7 +16,8 @@ export const VALID_ROLES: UserRole[] = [
   'system_admin',
   'prevention_officer',
   'agency_head',
-  'focal_person'
+  'focal_person',
+  'viewer'
 ];
 
 export function assertUserRole(role: string): UserRole {

@@ -44,7 +44,7 @@ export async function saveAssessment(indicatorId: number, payload: AssessmentPay
 export async function loadAssessment(indicatorId: number): Promise<AssessmentPayload | null> {
   const agencyId = getCurrentAgencyId();
   
-  const response = await fetch(`${API_BASE}/api/agency/${agencyId}/assessment?fy=2024–25`);
+  const response = await fetch(`${API_BASE}/api/agency/${agencyId}/assessment?fy=2024-25`);
   
   if (!response.ok) {
     if (response.status === 404) return null;

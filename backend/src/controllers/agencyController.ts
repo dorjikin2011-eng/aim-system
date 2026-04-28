@@ -10,9 +10,10 @@ export const getAgencyById = async (req: Request, res: Response) => {
     const { id } = req.params;
     const db = getDB();
     
-    const row = await getAsync<{ id: string; name: string }>(
+    // FIXED: Changed ? to $1 for PostgreSQL
+    const row = await getAsync<any>(
       db, 
-      'SELECT id, name FROM agencies WHERE id = ?', 
+      'SELECT id, name, sector, status, created_at, updated_at FROM agencies WHERE id = $1', 
       [id]
     );
     

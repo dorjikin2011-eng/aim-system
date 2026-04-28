@@ -6,7 +6,8 @@ export type UserRole =
   | 'system_admin'
   | 'prevention_officer'
   | 'agency_head'
-  | 'focal_person';
+  | 'focal_person'
+  | 'viewer';
 
 export const assertUserRole = (role: string): UserRole => {
   const validRoles: UserRole[] = [
@@ -16,7 +17,8 @@ export const assertUserRole = (role: string): UserRole => {
     'system_admin',
     'prevention_officer',
     'agency_head',
-    'focal_person'
+    'focal_person',
+    'viewer'
   ];
   if (!validRoles.includes(role as UserRole)) {
     throw new Error(`Invalid role: ${role}`);

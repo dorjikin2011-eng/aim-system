@@ -11,18 +11,18 @@ export const getCommissionDashboard = async (req: Request, res: Response) => {
     const fiscalYear = '2024–25'; // TODO: Make dynamic
 
     // 1. Executive Summary Metrics
+    // FIXED: Changed ? to $1, $2 and fixed table references
     const summaryMetrics = await getAsync<any>(db, 
       `SELECT 
-        COUNT(DISTINCT a.id) as total_agencies,
-        COUNT(CASE WHEN ir.score >= 80 THEN 1 END) as high_integrity,
-        COUNT(CASE WHEN ir.score >= 60 AND ir.score < 80 THEN 1 END) as medium_integrity,
-        COUNT(CASE WHEN ir.score < 60 THEN 1 END) as low_integrity,
-        AVG(ir.score) as avg_national_score,
-        COUNT(CASE WHEN a.status IN ('DRAFT', 'SUBMITTED_TO_HOA', 'SUBMITTED_TO_ACC') THEN 1 END) as pending_submissions
+        COUNT(DISTINCT ag.id) as total_agencies,
+        COUNT(CASE WHEN a.overall_score >= 80 THEN 1 END) as high_integrity,
+        COUNT(CASE WHEN a.overall_score >= 60 AND a.overall_score < 80 THEN 1 END) as medium_integrity,
+        COUNT(CASE WHEN a.overall_score < 60 THEN 1 END) as low_integrity,
+        AVG(a.overall_score) as avg_national_score,
+        COUNT(CASE WHEN a.status IN ('DRAFT', 'SUBMITTED_TO_AGENCY', 'SUBMITTED') THEN 1 END) as pending_submissions
        FROM agencies ag
-       LEFT JOIN assessments a ON ag.id = a.agency_id AND a.fiscal_year = ?
-       LEFT JOIN indicator_data ir ON ag.id = ir.agency_id AND ir.fiscal_year = ?`,
-      [fiscalYear, fiscalYear]
+       LEFT JOIN assessments a ON ag.id = a.agency_id AND a.fiscal_year = $1`,
+      [fiscalYear]
     );
 
     const metrics = summaryMetrics || {
@@ -35,17 +35,18 @@ export const getCommissionDashboard = async (req: Request, res: Response) => {
     };
 
     // 2. Score Distribution Data
-    const scoreDistribution = await allAsync<any[]>(db, 
+    // FIXED: Changed ? to $1 and generic type
+    const scoreDistribution = await allAsync<any>(db, 
       `SELECT 
         CASE 
-          WHEN ir.score >= 80 THEN 'High Integrity'
-          WHEN ir.score >= 60 THEN 'Medium Integrity'
+          WHEN a.overall_score >= 80 THEN 'High Integrity'
+          WHEN a.overall_score >= 60 THEN 'Medium Integrity'
           ELSE 'Low Integrity'
         END as integrity_level,
         COUNT(*) as count
        FROM agencies ag
-       LEFT JOIN indicator_data ir ON ag.id = ir.agency_id AND ir.fiscal_year = ?
-       WHERE ir.score IS NOT NULL
+       LEFT JOIN assessments a ON ag.id = a.agency_id AND a.fiscal_year = $1
+       WHERE a.overall_score IS NOT NULL
        GROUP BY integrity_level
        ORDER BY 
          CASE integrity_level
@@ -57,59 +58,82 @@ export const getCommissionDashboard = async (req: Request, res: Response) => {
     );
 
     // 3. Sector-wise Performance
-    const sectorPerformance = await allAsync<any[]>(db, 
+    // FIXED: Changed ? to $1 and generic type
+    const sectorPerformance = await allAsync<any>(db, 
       `SELECT 
         ag.sector,
         COUNT(*) as agency_count,
-        AVG(ir.score) as avg_score,
-        MIN(ir.score) as min_score,
-        MAX(ir.score) as max_score
+        AVG(a.overall_score) as avg_score,
+        MIN(a.overall_score) as min_score,
+        MAX(a.overall_score) as max_score
        FROM agencies ag
-       LEFT JOIN indicator_data ir ON ag.id = ir.agency_id AND ir.fiscal_year = ?
-       WHERE ir.score IS NOT NULL
+       LEFT JOIN assessments a ON ag.id = a.agency_id AND a.fiscal_year = $1
+       WHERE a.overall_score IS NOT NULL
        GROUP BY ag.sector
        ORDER BY avg_score DESC`,
       [fiscalYear]
     );
 
     // 4. Top and Bottom Agencies
-    const topAgencies = await allAsync<any[]>(db, 
+    // FIXED: Changed ? to $1 and generic type
+    const topAgencies = await allAsync<any>(db, 
       `SELECT 
         ag.name as agency_name,
         ag.sector,
-        ir.score
+        a.overall_score as score
        FROM agencies ag
-       JOIN indicator_data ir ON ag.id = ir.agency_id AND ir.fiscal_year = ?
-       ORDER BY ir.score DESC
+       JOIN assessments a ON ag.id = a.agency_id AND a.fiscal_year = $1
+       WHERE a.overall_score IS NOT NULL
+       ORDER BY a.overall_score DESC
        LIMIT 5`,
       [fiscalYear]
     );
 
-    const bottomAgencies = await allAsync<any[]>(db, 
+    // FIXED: Changed ? to $1 and generic type
+    const bottomAgencies = await allAsync<any>(db, 
       `SELECT 
         ag.name as agency_name,
         ag.sector,
-        ir.score
+        a.overall_score as score
        FROM agencies ag
-       JOIN indicator_data ir ON ag.id = ir.agency_id AND ir.fiscal_year = ?
-       WHERE ir.score IS NOT NULL
-       ORDER BY ir.score ASC
+       JOIN assessments a ON ag.id = a.agency_id AND a.fiscal_year = $1
+       WHERE a.overall_score IS NOT NULL
+       ORDER BY a.overall_score ASC
        LIMIT 5`,
       [fiscalYear]
     );
 
     // 5. Key Performance Indicators
+    // FIXED: Changed ? to $1 - Using dynamic_assessment_responses for detailed metrics
     const kpis = await getAsync<any>(db, 
       `SELECT 
         AVG(CASE 
-          WHEN complaint_mechanism_func = 1 AND conflict_interest_func = 1 AND gift_register_func = 1 
-          THEN 1 ELSE 0 
-        END) * 100 as iccs_implementation_rate,
-        AVG(elearning_completion_rate) as training_completion_rate,
-        AVG(ad_compliance_rate) as ad_compliance_rate,
-        AVG(atr_timeliness_rate) as atr_timeliness_rate
-       FROM indicator_data
-       WHERE fiscal_year = ?`,
+          WHEN dar.response_data::jsonb ? 'complaint_level' 
+            AND (dar.response_data::jsonb->>'complaint_level')::int >= 2
+            AND dar.response_data::jsonb ? 'coi_level'
+            AND (dar.response_data::jsonb->>'coi_level')::int >= 2
+            AND dar.response_data::jsonb ? 'gift_level'
+            AND (dar.response_data::jsonb->>'gift_level')::int >= 2
+          THEN 100 ELSE 0 
+        END) as iccs_implementation_rate,
+        AVG(CASE 
+          WHEN dar.response_data::jsonb ? 'training_percentage'
+          THEN (dar.response_data::jsonb->>'training_percentage')::float
+          ELSE 0
+        END) as training_completion_rate,
+        AVG(CASE 
+          WHEN dar.response_data::jsonb ? 'ad_compliance_rate'
+          THEN (dar.response_data::jsonb->>'ad_compliance_rate')::float
+          ELSE 0
+        END) as ad_compliance_rate,
+        AVG(CASE 
+          WHEN dar.response_data::jsonb ? 'atr_timeliness_rate'
+          THEN (dar.response_data::jsonb->>'atr_timeliness_rate')::float
+          ELSE 0
+        END) as atr_timeliness_rate
+       FROM assessments a
+       LEFT JOIN dynamic_assessment_responses dar ON a.id = dar.assessment_id
+       WHERE a.fiscal_year = $1`,
       [fiscalYear]
     );
 
@@ -121,7 +145,8 @@ export const getCommissionDashboard = async (req: Request, res: Response) => {
     };
 
     // 6. Recent Activity (Last 7 days)
-    const recentActivity = await allAsync<any[]>(db, 
+    // FIXED: Replaced SQLite datetime with PostgreSQL interval syntax
+    const recentActivity = await allAsync<any>(db, 
       `SELECT 
         al.action,
         al.user_id,
@@ -130,28 +155,29 @@ export const getCommissionDashboard = async (req: Request, res: Response) => {
         al.created_at as timestamp
        FROM audit_logs al
        LEFT JOIN agencies ag ON al.agency_id = ag.id
-       WHERE al.created_at > datetime('now', '-7 days')
+       WHERE al.created_at > (CURRENT_DATE - INTERVAL '7 days')
        ORDER BY al.created_at DESC
        LIMIT 10`,
       []
     );
 
     // 7. Workflow Status Overview
-    const workflowStatus = await allAsync<any[]>(db, 
+    // FIXED: Changed ? to $1 and generic type
+    const workflowStatus = await allAsync<any>(db, 
       `SELECT 
         status,
         COUNT(*) as count
        FROM assessments
-       WHERE fiscal_year = ?
+       WHERE fiscal_year = $1
        GROUP BY status
        ORDER BY 
          CASE status
            WHEN 'DRAFT' THEN 1
-           WHEN 'SUBMITTED_TO_HOA' THEN 2
-           WHEN 'RETURNED_BY_HOA' THEN 3
-           WHEN 'SUBMITTED_TO_ACC' THEN 4
-           WHEN 'UNDER_REVIEW_BY_ACC' THEN 5
-           WHEN 'AWAITING_VALIDATION' THEN 6
+           WHEN 'IN_PROGRESS' THEN 2
+           WHEN 'SUBMITTED_TO_AGENCY' THEN 3
+           WHEN 'SUBMITTED' THEN 4
+           WHEN 'AWAITING_VALIDATION' THEN 5
+           WHEN 'VALIDATED' THEN 6
            WHEN 'FINALIZED' THEN 7
            ELSE 8
          END`,
@@ -160,49 +186,49 @@ export const getCommissionDashboard = async (req: Request, res: Response) => {
 
     res.json({
       summary: {
-        totalAgencies: metrics.total_agencies || 0,
-        highIntegrity: metrics.high_integrity || 0,
-        mediumIntegrity: metrics.medium_integrity || 0,
-        lowIntegrity: metrics.low_integrity || 0,
-        avgNationalScore: metrics.avg_national_score ? parseFloat(metrics.avg_national_score.toFixed(1)) : 0,
-        pendingSubmissions: metrics.pending_submissions || 0
+        totalAgencies: Number(metrics.total_agencies) || 0,
+        highIntegrity: Number(metrics.high_integrity) || 0,
+        mediumIntegrity: Number(metrics.medium_integrity) || 0,
+        lowIntegrity: Number(metrics.low_integrity) || 0,
+        avgNationalScore: metrics.avg_national_score ? parseFloat(Number(metrics.avg_national_score).toFixed(1)) : 0,
+        pendingSubmissions: Number(metrics.pending_submissions) || 0
       },
-      scoreDistribution: scoreDistribution.map(item => ({
+      scoreDistribution: scoreDistribution.map((item: any) => ({
         integrityLevel: item.integrity_level,
-        count: item.count
+        count: Number(item.count)
       })),
-      sectorPerformance: sectorPerformance.map(item => ({
+      sectorPerformance: sectorPerformance.map((item: any) => ({
         sector: item.sector,
-        agencyCount: item.agency_count,
-        avgScore: item.avg_score ? parseFloat(item.avg_score.toFixed(1)) : 0,
-        minScore: item.min_score ? parseFloat(item.min_score.toFixed(1)) : 0,
-        maxScore: item.max_score ? parseFloat(item.max_score.toFixed(1)) : 0
+        agencyCount: Number(item.agency_count),
+        avgScore: item.avg_score ? parseFloat(Number(item.avg_score).toFixed(1)) : 0,
+        minScore: item.min_score ? parseFloat(Number(item.min_score).toFixed(1)) : 0,
+        maxScore: item.max_score ? parseFloat(Number(item.max_score).toFixed(1)) : 0
       })),
-      topAgencies: topAgencies.map(item => ({
+      topAgencies: topAgencies.map((item: any) => ({
         agencyName: item.agency_name,
         sector: item.sector,
-        score: item.score ? parseFloat(item.score.toFixed(1)) : 0
+        score: item.score ? parseFloat(Number(item.score).toFixed(1)) : 0
       })),
-      bottomAgencies: bottomAgencies.map(item => ({
+      bottomAgencies: bottomAgencies.map((item: any) => ({
         agencyName: item.agency_name,
         sector: item.sector,
-        score: item.score ? parseFloat(item.score.toFixed(1)) : 0
+        score: item.score ? parseFloat(Number(item.score).toFixed(1)) : 0
       })),
       kpis: {
-        iccsImplementationRate: kpiData.iccs_implementation_rate ? parseFloat(kpiData.iccs_implementation_rate.toFixed(1)) : 0,
-        trainingCompletionRate: kpiData.training_completion_rate ? parseFloat(kpiData.training_completion_rate.toFixed(1)) : 0,
-        adComplianceRate: kpiData.ad_compliance_rate ? parseFloat(kpiData.ad_compliance_rate.toFixed(1)) : 0,
-        atrTimelinessRate: kpiData.atr_timeliness_rate ? parseFloat(kpiData.atr_timeliness_rate.toFixed(1)) : 0
+        iccsImplementationRate: kpiData.iccs_implementation_rate ? parseFloat(Number(kpiData.iccs_implementation_rate).toFixed(1)) : 0,
+        trainingCompletionRate: kpiData.training_completion_rate ? parseFloat(Number(kpiData.training_completion_rate).toFixed(1)) : 0,
+        adComplianceRate: kpiData.ad_compliance_rate ? parseFloat(Number(kpiData.ad_compliance_rate).toFixed(1)) : 0,
+        atrTimelinessRate: kpiData.atr_timeliness_rate ? parseFloat(Number(kpiData.atr_timeliness_rate).toFixed(1)) : 0
       },
-      recentActivity: recentActivity.map(item => ({
+      recentActivity: recentActivity.map((item: any) => ({
         action: formatAction(item.action),
         actor: item.user_id || 'System',
         agency: item.agency_name || 'System',
         timestamp: item.timestamp
       })),
-      workflowStatus: workflowStatus.map(item => ({
+      workflowStatus: workflowStatus.map((item: any) => ({
         status: formatStatus(item.status),
-        count: item.count,
+        count: Number(item.count),
         rawStatus: item.status
       }))
     });
@@ -244,8 +270,10 @@ function formatStatus(status: string): string {
     'AWAITING_VALIDATION': 'Awaiting Validation',
     'FINALIZED': 'Finalized',
     'SUBMITTED_TO_AGENCY': 'Submitted to Agency',
+    'SUBMITTED': 'Submitted',
     'IN_PROGRESS': 'In Progress',
-    'NOT_STARTED': 'Not Started'
+    'NOT_STARTED': 'Not Started',
+    'VALIDATED': 'Validated'
   };
   return map[status] || status;
 }

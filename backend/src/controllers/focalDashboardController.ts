@@ -1,6 +1,12 @@
 // backend/src/controllers/focalDashboardController.ts
 import { Request, Response } from 'express';
 import { getDB, getAsync, runAsync, allAsync } from '../models/db';
+import crypto from 'crypto';
+
+// Helper function to generate UUID
+function generateUUID(): string {
+  return crypto.randomUUID();
+}
 
 // ============================================
 // GET /api/focal/indicators
@@ -15,9 +21,10 @@ export const getFocalIndicators = async (req: Request, res: Response) => {
     }
 
     // Get agency ID for focal user
+    // FIXED: Changed ? to $1
     const userRow = await getAsync<{ agency_id: string }>(
       db, 
-      'SELECT agency_id FROM users WHERE id = ?', 
+      'SELECT agency_id FROM users WHERE id = $1', 
       [userId]
     );
 
@@ -29,22 +36,23 @@ export const getFocalIndicators = async (req: Request, res: Response) => {
     const fiscalYear = '2024–25';
 
     // Get current assessment
+    // FIXED: Changed ? to $1, $2
     let assessment = await getAsync<{ id: string; status: string }>(
       db, 
       `SELECT id, status FROM assessments 
-       WHERE agency_id = ? AND fiscal_year = ?`,
+       WHERE agency_id = $1 AND fiscal_year = $2`,
       [agencyId, fiscalYear]
     );
 
     let assessmentId: string;
     
     if (!assessment) {
-      // Create new assessment
-      assessmentId = `ASM_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+      // Create new assessment with UUID
+      assessmentId = generateUUID();
       await runAsync(db, 
         `INSERT INTO assessments (
           id, agency_id, fiscal_year, status, assigned_officer_id
-        ) VALUES (?, ?, ?, 'DRAFT', ?)`,
+        ) VALUES ($1, $2, $3, 'DRAFT', $4)`,
         [assessmentId, agencyId, fiscalYear, userId]
       );
     } else {
@@ -58,7 +66,8 @@ export const getFocalIndicators = async (req: Request, res: Response) => {
     }
 
     // Get indicator responses from dynamic_assessment_responses table
-    const indicators = await allAsync<any[]>(
+    // FIXED: Changed ? to $1 and generic type
+    const indicators = await allAsync<any>(
       db, 
       `SELECT 
         indicator_id,
@@ -69,7 +78,7 @@ export const getFocalIndicators = async (req: Request, res: Response) => {
         created_at,
         updated_at
        FROM dynamic_assessment_responses 
-       WHERE assessment_id = ? 
+       WHERE assessment_id = $1 
        ORDER BY indicator_id`,
       [assessmentId]
     );
@@ -81,7 +90,7 @@ export const getFocalIndicators = async (req: Request, res: Response) => {
     const fullIndicators = [];
     
     for (const indicatorId of indicatorIds) {
-      const existing = indicators.find(ind => ind.indicator_id === indicatorId);
+      const existing = indicators.find((ind: any) => ind.indicator_id === indicatorId);
       
       if (existing) {
         // Parse response data
@@ -142,12 +151,13 @@ export const submitToFocalHoA = async (req: Request, res: Response) => {
     }
 
     // Verify user owns this assessment
+    // FIXED: Changed ? to $1, $2, $3
     const assessment = await getAsync<any>(
       db, 
       `SELECT a.id, a.agency_id 
        FROM assessments a
        JOIN users u ON a.agency_id = u.agency_id
-       WHERE a.id = ? AND u.id = ? AND u.role = 'focal_person'`,
+       WHERE a.id = $1 AND u.id = $2 AND u.role = 'focal_person'`,
       [assessmentId, userId]
     );
 
@@ -156,10 +166,11 @@ export const submitToFocalHoA = async (req: Request, res: Response) => {
     }
 
     // Update assessment status
+    // FIXED: Changed ? to $1
     await runAsync(db, 
       `UPDATE assessments 
        SET status = 'SUBMITTED_TO_AGENCY', updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       WHERE id = $1`,
       [assessmentId]
     );
 
@@ -184,12 +195,13 @@ export const saveIndicator = async (req: Request, res: Response) => {
     }
 
     // Verify user owns this assessment
+    // FIXED: Changed ? to $1, $2, $3
     const assessment = await getAsync<any>(
       db, 
       `SELECT a.id, a.status, a.agency_id
        FROM assessments a
        JOIN users u ON a.agency_id = u.agency_id
-       WHERE a.id = ? AND u.id = ? AND u.role = 'focal_person'`,
+       WHERE a.id = $1 AND u.id = $2 AND u.role = 'focal_person'`,
       [assessmentId, userId]
     );
 
@@ -205,9 +217,10 @@ export const saveIndicator = async (req: Request, res: Response) => {
     }
 
     // Check if dynamic assessment response exists
+    // FIXED: Changed ? to $1, $2
     const existing = await getAsync<any>(
       db, 
-      'SELECT id FROM dynamic_assessment_responses WHERE assessment_id = ? AND indicator_id = ?',
+      'SELECT id FROM dynamic_assessment_responses WHERE assessment_id = $1 AND indicator_id = $2',
       [assessmentId, indicatorId]
     );
 
@@ -215,20 +228,21 @@ export const saveIndicator = async (req: Request, res: Response) => {
 
     if (existing) {
       // Update existing
+      // FIXED: Changed ? to $1, $2, $3, $4, $5
       await runAsync(db, 
         `UPDATE dynamic_assessment_responses 
-         SET response_data = ?, evidence_files = ?, updated_at = ?
-         WHERE assessment_id = ? AND indicator_id = ?`,
+         SET response_data = $1, evidence_files = $2, updated_at = $3
+         WHERE assessment_id = $4 AND indicator_id = $5`,
         [JSON.stringify(responseData || {}), JSON.stringify(evidence_files || []), now, assessmentId, indicatorId]
       );
     } else {
-      // Create new
-      const id = `DR_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+      // Create new with UUID
+      const id = generateUUID();
       await runAsync(db, 
         `INSERT INTO dynamic_assessment_responses (
           id, assessment_id, indicator_id, response_data, evidence_files, 
           final_score, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, 0, $6, $7)`,
         [id, assessmentId, indicatorId, JSON.stringify(responseData || {}), JSON.stringify(evidence_files || []), now, now]
       );
     }
@@ -253,9 +267,10 @@ export const getFocalStatus = async (req: Request, res: Response) => {
     }
 
     // Get agency ID for focal user
+    // FIXED: Changed ? to $1
     const userRow = await getAsync<{ agency_id: string }>(
       db, 
-      'SELECT agency_id FROM users WHERE id = ?', 
+      'SELECT agency_id FROM users WHERE id = $1', 
       [userId]
     );
 
@@ -267,10 +282,11 @@ export const getFocalStatus = async (req: Request, res: Response) => {
     const fiscalYear = '2024–25';
 
     // Get current assessment
+    // FIXED: Changed ? to $1, $2
     const assessment = await getAsync<{ id: string; status: string; overall_score: number | null }>(
       db, 
       `SELECT id, status, overall_score FROM assessments 
-       WHERE agency_id = ? AND fiscal_year = ?`,
+       WHERE agency_id = $1 AND fiscal_year = $2`,
       [agencyId, fiscalYear]
     );
 

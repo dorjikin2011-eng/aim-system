@@ -5,6 +5,12 @@ import * as bcrypt from 'bcryptjs';
 import { generateTemporaryPassword } from '../utils/authUtils';
 import { sendPasswordResetEmail } from '../services/emailService';
 import { User } from '../types/user';
+import crypto from 'crypto';
+
+// Helper function to generate UUID
+function generateUUID(): string {
+  return crypto.randomUUID();
+}
 
 // ============================================
 // Get user by ID
@@ -12,9 +18,10 @@ import { User } from '../types/user';
 async function getUserById(id: string): Promise<User | null> {
   try {
     const db = getDB();
+    // FIXED: Changed ? to $1
     const user = await getAsync<User>(
       db, 
-      'SELECT id, email, name, role FROM users WHERE id = ?',
+      'SELECT id, email, name, role FROM users WHERE id = $1',
       [id]
     );
     return user || null;
@@ -30,9 +37,10 @@ async function getUserById(id: string): Promise<User | null> {
 export async function getUserByEmail(email: string): Promise<User | null> {
   try {
     const db = getDB();
+    // FIXED: Changed ? to $1
     const user = await getAsync<User>(
       db, 
-      'SELECT id, email, name, role, password_hash, is_active FROM users WHERE email = ?',
+      'SELECT id, email, name, role, password_hash, is_active FROM users WHERE email = $1',
       [email]
     );
     return user || null;
@@ -48,6 +56,7 @@ export async function getUserByEmail(email: string): Promise<User | null> {
 export async function getUserWithAgency(id: string): Promise<any | null> {
   try {
     const db = getDB();
+    // FIXED: Changed ? to $1
     const user = await getAsync<any>(
       db, 
       `SELECT 
@@ -56,7 +65,7 @@ export async function getUserWithAgency(id: string): Promise<any | null> {
         a.name as agency_name, a.sector as agency_sector
        FROM users u
        LEFT JOIN agencies a ON u.agency_id = a.id
-       WHERE u.id = ?`,
+       WHERE u.id = $1`,
       [id]
     );
     return user || null;
@@ -72,8 +81,9 @@ export async function getUserWithAgency(id: string): Promise<any | null> {
 async function updateUserPassword(id: string, hashedPassword: string): Promise<void> {
   try {
     const db = getDB();
+    // FIXED: Changed ? to $1, $2
     await runAsync(db, 
-      'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       [hashedPassword, id]
     );
   } catch (error) {
@@ -90,11 +100,13 @@ export async function getAllUsers(includeInactive: boolean = false): Promise<Use
     const db = getDB();
     let query = 'SELECT id, email, name, role, agency_id, is_active, created_at, updated_at FROM users';
     if (!includeInactive) {
-      query += ' WHERE is_active = 1';
+      // FIXED: Changed is_active = 1 to is_active = true
+      query += ' WHERE is_active = true';
     }
     query += ' ORDER BY created_at DESC';
     
-    const users = await allAsync<User[]>(db, query, []);
+    // FIXED: Changed generic type from User[] to User
+    const users = await allAsync<User>(db, query, []);
     return users || [];
   } catch (error) {
     console.error('Error getting all users:', error);
@@ -108,9 +120,10 @@ export async function getAllUsers(includeInactive: boolean = false): Promise<Use
 export async function getUsersByRole(role: string): Promise<User[]> {
   try {
     const db = getDB();
-    const users = await allAsync<User[]>(
+    // FIXED: Changed ? to $1 and generic type
+    const users = await allAsync<User>(
       db,
-      'SELECT id, email, name, role, agency_id, is_active FROM users WHERE role = ? AND is_active = 1 ORDER BY name',
+      'SELECT id, email, name, role, agency_id, is_active FROM users WHERE role = $1 AND is_active = true ORDER BY name',
       [role]
     );
     return users || [];
@@ -126,9 +139,10 @@ export async function getUsersByRole(role: string): Promise<User[]> {
 export async function getUsersByAgency(agencyId: string): Promise<User[]> {
   try {
     const db = getDB();
-    const users = await allAsync<User[]>(
+    // FIXED: Changed ? to $1 and generic type
+    const users = await allAsync<User>(
       db,
-      'SELECT id, email, name, role, phone, department FROM users WHERE agency_id = ? AND is_active = 1 ORDER BY name',
+      'SELECT id, email, name, role, phone, department FROM users WHERE agency_id = $1 AND is_active = true ORDER BY name',
       [agencyId]
     );
     return users || [];
@@ -154,9 +168,10 @@ export async function createUser(
     const db = getDB();
     
     // Check if user already exists
+    // FIXED: Changed ? to $1
     const existing = await getAsync<User>(
       db,
-      'SELECT id FROM users WHERE email = ?',
+      'SELECT id FROM users WHERE email = $1',
       [email]
     );
     
@@ -168,15 +183,16 @@ export async function createUser(
     const tempPassword = generateTemporaryPassword(12);
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     
-    // Create user
-    const userId = `USR_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+    // Create user with UUID
+    const userId = generateUUID();
     const now = new Date().toISOString();
     
+    // FIXED: Changed ? to $1, $2, etc. and is_active = 1 to true
     await runAsync(db,
       `INSERT INTO users (
         id, email, name, password_hash, role, agency_id, 
         phone, department, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10)`,
       [userId, email, name, hashedPassword, role, agencyId, phone, department, now, now]
     );
     
@@ -203,43 +219,48 @@ export async function updateUser(
     const db = getDB();
     const updateFields: string[] = [];
     const params: any[] = [];
+    let paramCounter = 1;
     
     if (updates.name !== undefined) {
-      updateFields.push('name = ?');
+      updateFields.push(`name = $${paramCounter}`);
       params.push(updates.name);
+      paramCounter++;
     }
     if (updates.role !== undefined) {
-      updateFields.push('role = ?');
+      updateFields.push(`role = $${paramCounter}`);
       params.push(updates.role);
+      paramCounter++;
     }
     if (updates.agency_id !== undefined) {
-      updateFields.push('agency_id = ?');
+      updateFields.push(`agency_id = $${paramCounter}`);
       params.push(updates.agency_id);
+      paramCounter++;
     }
     if (updates.phone !== undefined) {
-      updateFields.push('phone = ?');
+      updateFields.push(`phone = $${paramCounter}`);
       params.push(updates.phone);
+      paramCounter++;
     }
     if (updates.department !== undefined) {
-      updateFields.push('department = ?');
+      updateFields.push(`department = $${paramCounter}`);
       params.push(updates.department);
+      paramCounter++;
     }
     if (updates.is_active !== undefined) {
-      updateFields.push('is_active = ?');
-      params.push(updates.is_active ? 1 : 0);
+      updateFields.push(`is_active = $${paramCounter}`);
+      params.push(updates.is_active);
+      paramCounter++;
     }
     
     if (updateFields.length === 0) {
       return false;
     }
     
-    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
     params.push(id);
     
-    await runAsync(db,
-      `UPDATE users SET ${updateFields.join(', ')} WHERE id = ?`,
-      params
-    );
+    const query = `UPDATE users SET ${updateFields.join(', ')} WHERE id = $${paramCounter}`;
+    await runAsync(db, query, params);
     
     return true;
   } catch (error) {
@@ -254,8 +275,9 @@ export async function updateUser(
 export async function deleteUser(id: string): Promise<boolean> {
   try {
     const db = getDB();
+    // FIXED: Changed ? to $1
     await runAsync(db,
-      'UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      'UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
       [id]
     );
     return true;
@@ -271,7 +293,8 @@ export async function deleteUser(id: string): Promise<boolean> {
 export async function hardDeleteUser(id: string): Promise<boolean> {
   try {
     const db = getDB();
-    await runAsync(db, 'DELETE FROM users WHERE id = ?', [id]);
+    // FIXED: Changed ? to $1
+    await runAsync(db, 'DELETE FROM users WHERE id = $1', [id]);
     return true;
   } catch (error) {
     console.error('Error hard deleting user:', error);
@@ -325,9 +348,10 @@ export async function changePassword(
     const db = getDB();
     
     // Get user with password hash
+    // FIXED: Changed ? to $1
     const user = await getAsync<any>(
       db,
-      'SELECT id, password_hash FROM users WHERE id = ?',
+      'SELECT id, password_hash FROM users WHERE id = $1',
       [userId]
     );
     
@@ -359,6 +383,7 @@ export async function getUserStats(): Promise<any> {
   try {
     const db = getDB();
     
+    // FIXED: Changed is_active = 1/0 to true/false
     const stats = await getAsync<any>(
       db,
       `SELECT 
@@ -369,8 +394,8 @@ export async function getUserStats(): Promise<any> {
         SUM(CASE WHEN role = 'prevention_officer' THEN 1 ELSE 0 END) as prevention_officers,
         SUM(CASE WHEN role = 'agency_head' THEN 1 ELSE 0 END) as agency_heads,
         SUM(CASE WHEN role = 'focal_person' THEN 1 ELSE 0 END) as focal_persons,
-        SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
-        SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) as inactive
+        SUM(CASE WHEN is_active = true THEN 1 ELSE 0 END) as active,
+        SUM(CASE WHEN is_active = false THEN 1 ELSE 0 END) as inactive
        FROM users`,
       []
     );

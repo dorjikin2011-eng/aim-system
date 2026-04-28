@@ -17,7 +17,7 @@ export default function TopNavBar({ fiscalYear, onFiscalYearChange }: Props) {
   const navigate = useNavigate();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const fiscalYears = ['2024–25', '2025–26', '2026–27', '2027–28'];
+  const fiscalYears = ['2024-25', '2025-26', '2026-27', '2027-28'];
 
   return (
     <nav className="bg-white shadow-sm">

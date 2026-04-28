@@ -1,6 +1,6 @@
 // backend/src/services/auditService.ts
 import { Request } from 'express';
-import { getDB, runAsync, allAsync } from '../models/db';
+import { pool } from '../models/db'; // <-- your actual export from db.ts
 import { v4 as uuidv4 } from 'uuid';
 
 export const logAction = async (
@@ -10,27 +10,16 @@ export const logAction = async (
   details?: Record<string, any>
 ) => {
   try {
-    const db = getDB();
-    
-    // Get user info from session or request
     const userId = (req as any).user?.id || (req as any).session?.user?.id || 'anonymous';
     const userEmail = (req as any).user?.email || (req as any).session?.user?.email || 'anonymous';
-    
-    // Get IP address
     const ipAddress = req.ip || req.ips?.[0] || req.socket?.remoteAddress || 'unknown';
-    
-    // Get User Agent
     const userAgent = req.get('User-Agent') || 'unknown';
-    
-    // Generate unique ID
     const logId = uuidv4();
-    
-    // Use runAsync instead of db.run directly
-    await runAsync(
-      db,
-      `INSERT INTO audit_logs 
-       (id, user_id, action, resource_type, resource_id, details, ip_address, user_agent, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+
+    await pool.query(
+      `INSERT INTO audit_logs
+        (id, user_id, action, resource_type, resource_id, details, ip_address, user_agent, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [
         logId,
         userId,
@@ -45,11 +34,9 @@ export const logAction = async (
     );
   } catch (err) {
     console.error('Audit log failed:', err);
-    // Never fail the main operation due to audit failure
   }
 };
 
-// Alternative: Legacy function for backward compatibility with old column names
 export const logActionLegacy = async (
   req: Request,
   action: string,
@@ -57,20 +44,16 @@ export const logActionLegacy = async (
   details?: Record<string, any>
 ) => {
   try {
-    const db = getDB();
-    
     const userId = (req as any).user?.id || (req as any).session?.user?.id || 'anonymous';
     const userEmail = (req as any).user?.email || (req as any).session?.user?.email || 'anonymous';
     const ipAddress = req.ip || req.ips?.[0] || req.socket?.remoteAddress || 'unknown';
     const userAgent = req.get('User-Agent') || 'unknown';
     const logId = uuidv4();
-    
-    // Use runAsync with legacy column names (actor_id, actor_email)
-    await runAsync(
-      db,
-      `INSERT INTO audit_logs 
-       (id, actor_id, actor_email, action, target_type, target_id, details, ip_address, user_agent, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+
+    await pool.query(
+      `INSERT INTO audit_logs
+        (id, actor_id, actor_email, action, target_type, target_id, details, ip_address, user_agent, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         logId,
         userId,
@@ -89,7 +72,6 @@ export const logActionLegacy = async (
   }
 };
 
-// Function to get audit logs
 export const getAuditLogs = async (options?: {
   limit?: number;
   offset?: number;
@@ -99,94 +81,84 @@ export const getAuditLogs = async (options?: {
   endDate?: Date;
 }) => {
   try {
-    const db = getDB();
     let query = 'SELECT * FROM audit_logs WHERE 1=1';
     const params: any[] = [];
-    
+    let paramIndex = 1;
+
     if (options?.action) {
-      query += ' AND action = ?';
+      query += ` AND action = $${paramIndex++}`;
       params.push(options.action);
     }
-    
     if (options?.userId) {
-      query += ' AND user_id = ?';
+      query += ` AND user_id = $${paramIndex++}`;
       params.push(options.userId);
     }
-    
     if (options?.startDate) {
-      query += ' AND created_at >= ?';
+      query += ` AND created_at >= $${paramIndex++}`;
       params.push(options.startDate.toISOString());
     }
-    
     if (options?.endDate) {
-      query += ' AND created_at <= ?';
+      query += ` AND created_at <= $${paramIndex++}`;
       params.push(options.endDate.toISOString());
     }
-    
+
     query += ' ORDER BY created_at DESC';
-    
+
     if (options?.limit) {
-      query += ' LIMIT ?';
+      query += ` LIMIT $${paramIndex++}`;
       params.push(options.limit);
-      
       if (options?.offset) {
-        query += ' OFFSET ?';
+        query += ` OFFSET $${paramIndex++}`;
         params.push(options.offset);
       }
     }
-    
-    const logs = await allAsync<any[]>(db, query, params);
-    return logs;
+
+    const { rows } = await pool.query(query, params);
+    return rows;
   } catch (err) {
     console.error('Failed to get audit logs:', err);
     return [];
   }
 };
 
-// Function to get audit log statistics
 export const getAuditStats = async (days: number = 7) => {
   try {
-    const db = getDB();
-    
-    // Get count by action
-    const actionStats = await allAsync<any[]>(
-      db,
-      `SELECT action, COUNT(*) as count 
-       FROM audit_logs 
-       WHERE created_at >= datetime('now', ?)
-       GROUP BY action 
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const { rows: actionStats } = await pool.query(
+      `SELECT action, COUNT(*) AS count
+       FROM audit_logs
+       WHERE created_at >= $1
+       GROUP BY action
        ORDER BY count DESC`,
-      [`-${days} days`]
+      [startDate.toISOString()]
     );
-    
-    // Get count by day
-    const dailyStats = await allAsync<any[]>(
-      db,
-      `SELECT DATE(created_at) as date, COUNT(*) as count 
-       FROM audit_logs 
-       WHERE created_at >= datetime('now', ?)
-       GROUP BY DATE(created_at) 
+
+    const { rows: dailyStats } = await pool.query(
+      `SELECT DATE(created_at) AS date, COUNT(*) AS count
+       FROM audit_logs
+       WHERE created_at >= $1
+       GROUP BY DATE(created_at)
        ORDER BY date DESC`,
-      [`-${days} days`]
+      [startDate.toISOString()]
     );
-    
-    // Get top users by activity
-    const userStats = await allAsync<any[]>(
-      db,
-      `SELECT user_id, COUNT(*) as count 
-       FROM audit_logs 
-       WHERE created_at >= datetime('now', ?)
-       GROUP BY user_id 
-       ORDER BY count DESC 
+
+    const { rows: userStats } = await pool.query(
+      `SELECT user_id, COUNT(*) AS count
+       FROM audit_logs
+       WHERE created_at >= $1
+       GROUP BY user_id
+       ORDER BY count DESC
        LIMIT 10`,
-      [`-${days} days`]
+      [startDate.toISOString()]
     );
-    
+
     return {
       actionStats,
       dailyStats,
       userStats,
-      total: dailyStats.reduce((sum, day) => sum + day.count, 0)
+      total: dailyStats.reduce((sum, day) => sum + Number(day.count || 0), 0),
     };
   } catch (err) {
     console.error('Failed to get audit stats:', err);

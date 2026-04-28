@@ -1,4 +1,4 @@
-//frontend/src/pages/admin/AgencyList.tsx
+// frontend/src/pages/admin/AgencyList.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AgencyCard from '../../components/AgencyCard';
@@ -17,7 +17,7 @@ interface Agency {
   user_count: number;
   declaration_count: number;
   created_at: string;
-  hoa_name?: string; // NEW: HoA info
+  hoa_name?: string; // HoA info
   hoa_email?: string;
   hoa_phone?: string;
   hoa_position?: string;
@@ -36,52 +36,80 @@ export default function AgencyList() {
   const fetchAgencies = async () => {
     try {
       setLoading(true);
-      const res = await fetch('${API_BASE}/api/admin/agencies');
-      if (!res.ok) throw new Error('Failed to fetch agencies');
+      // ✅ FIXED: Use backticks for template literal
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/admin/agencies`, {
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        }
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: 'Failed to fetch agencies' }));
+        throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
+      }
+      
       const data = await res.json();
-      setAgencies(data.agencies);
+      // Handle different response formats
+      const agenciesList = data.agencies || data.data || data;
+      setAgencies(Array.isArray(agenciesList) ? agenciesList : []);
       setError('');
     } catch (err: any) {
+      console.error('Error fetching agencies:', err);
       setError(err.message || 'Failed to load agencies');
+      setAgencies([]);
     } finally {
       setLoading(false);
     }
   };
 
   const handleEdit = (agency: Agency) => {
-    // For now, keep simple edit. Later we might create AgencyEditWizard
     navigate(`/admin/agencies/${agency.id}/edit`);
   };
 
   const handleViewHoA = (agency: Agency) => {
-    // Show HoA details modal or navigate to details page
-    alert(`Head of Agency: ${agency.hoa_name || 'Not assigned'}\nEmail: ${agency.hoa_email || 'N/A'}\nPhone: ${agency.hoa_phone || 'N/A'}`);
+    // Show HoA details in a modal or alert
+    const hoaInfo = agency.hoa_name 
+      ? `Head of Agency: ${agency.hoa_name}\nPosition: ${agency.hoa_position || 'Head of Agency'}\nEmail: ${agency.hoa_email || 'N/A'}\nPhone: ${agency.hoa_phone || 'N/A'}`
+      : `No Head of Agency assigned for ${agency.name}`;
+    alert(hoaInfo);
   };
 
   const handleDelete = async (agency: Agency) => {
-    if (!confirm(`Delete agency "${agency.name}"? This cannot be undone.`)) return;
+    if (!confirm(`⚠️ Delete agency "${agency.name}"?\n\nThis will also delete all associated users and declarations. This action cannot be undone.`)) return;
 
     try {
+      const token = localStorage.getItem('token');
       const res = await fetch(`${API_BASE}/api/admin/agencies/${agency.id}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        }
       });
+      
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to delete agency');
+        const err = await res.json().catch(() => ({ error: 'Failed to delete agency' }));
+        throw new Error(err.error || err.message || 'Failed to delete agency');
       }
+      
+      // Remove from list on success
       setAgencies(agencies.filter(a => a.id !== agency.id));
+      alert(`✅ Agency "${agency.name}" deleted successfully`);
     } catch (err: any) {
+      console.error('Delete error:', err);
       alert('Error: ' + err.message);
     }
   };
 
   const handleQuickAdd = () => {
-    // Legacy simple form - keep for quick additions if needed
     navigate('/admin/agencies/new');
   };
 
   const handleAddWithHoA = () => {
-    // NEW: Navigate to wizard
     navigate('/admin/agencies/wizard');
   };
 
@@ -172,7 +200,17 @@ export default function AgencyList() {
         </button>
       </div>
 
-      {error && <div className="mb-4 p-3 bg-red-100 text-red-700 rounded">{error}</div>}
+      {error && (
+        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded border border-red-200">
+          <strong>Error:</strong> {error}
+          <button 
+            onClick={() => fetchAgencies()} 
+            className="ml-3 text-sm underline hover:no-underline"
+          >
+            Try Again
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-8">
@@ -216,7 +254,7 @@ export default function AgencyList() {
                       <td className="px-6 py-4">
                         <div>
                           <div className="font-medium text-gray-900">{agency.name}</div>
-                          <div className="text-sm text-gray-500">ID: {agency.id}</div>
+                          <div className="text-sm text-gray-500">ID: {agency.id.substring(0, 8)}...</div>
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -276,7 +314,7 @@ export default function AgencyList() {
             </div>
           </div>
           
-          {/* Also keep card view as optional? Or remove? */}
+          {/* Card View (Legacy) */}
           <div className="mt-6">
             <details className="bg-gray-50 p-4 rounded-lg">
               <summary className="cursor-pointer text-gray-700 font-medium">Card View (Legacy)</summary>

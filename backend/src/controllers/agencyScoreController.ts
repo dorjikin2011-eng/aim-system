@@ -3,7 +3,8 @@ import { Request, Response } from 'express';
 import { getDB, allAsync } from '../models/db';
 
 // ============================================
-// GET /api/agency/scores
+// GET /api/reports/agency-scores
+// Description: Get all agency scores for the bar chart
 // ============================================
 export const getAgencyScores = async (req: Request, res: Response) => {
   try {
@@ -11,57 +12,79 @@ export const getAgencyScores = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Get current active fiscal year or use provided one
-    const targetFiscalYear = fiscal_year || '2025-26';
+    const currentYear = new Date().getFullYear();
+    const defaultFy = `${currentYear}–${currentYear + 1}`;
+    const targetFiscalYear = fiscal_year || defaultFy;
     
-    // Get all active indicators first to understand the scoring structure
-    const indicators = await allAsync<any[]>(db, 
-      `SELECT id, weight, category FROM indicators WHERE is_active = 1 ORDER BY display_order`,
-      []
-    );
+    console.log('📊 Fetching agency scores for FY:', targetFiscalYear);
     
-    // Get agency scores
-    const rows = await allAsync<any[]>(db, 
-      `SELECT 
-        a.id, 
-        a.name, 
-        COALESCE(SUM(id.score), 0) as total_score,
-        COALESCE(SUM(i.weight), 0) as max_possible_score,
-        COUNT(DISTINCT id.indicator_id) as indicators_assessed,
-        COUNT(DISTINCT i.id) as total_indicators
+    // Get all active agencies with their assessment scores
+    const rows = await allAsync<any>(db, `
+      SELECT 
+        a.id,
+        a.name,
+        a.sector,
+        COALESCE(ass.overall_score, 0) as total_score,
+        COALESCE(ass.status, 'NOT_STARTED') as status,
+        ass.fiscal_year,
+        ass.finalized_at,
+        ass.updated_at
       FROM agencies a
-      LEFT JOIN indicator_data id ON a.id = id.agency_id 
-        AND id.fiscal_year = ? 
-        AND id.status = 'final'
-      LEFT JOIN indicators i ON i.id = id.indicator_id AND i.is_active = 1
+      LEFT JOIN assessments ass ON a.id = ass.agency_id AND ass.fiscal_year = $1
       WHERE a.status = 'active'
-      GROUP BY a.id, a.name
-      ORDER BY total_score DESC`,
-      [targetFiscalYear]
-    );
-
+      ORDER BY COALESCE(ass.overall_score, 0) DESC, a.name ASC
+    `, [targetFiscalYear]);
+    
+    console.log(`📊 Found ${rows.length} agencies for FY ${targetFiscalYear}`);
+    
+    // Get total indicators count for reference
+    let totalIndicators = 5; // Default AIMS has 5 indicators
+    try {
+      const indicatorsResult = await allAsync<any>(db, 
+        `SELECT COUNT(*) as count FROM indicators WHERE is_active = true`,
+        []
+      );
+      if (indicatorsResult && indicatorsResult.length > 0) {
+        totalIndicators = indicatorsResult[0].count || 5;
+      }
+    } catch (err) {
+      console.log('Could not fetch indicators count, using default 5');
+    }
+    
     const scores = rows.map(row => ({
       id: row.id,
       name: row.name,
+      sector: row.sector,
       score: parseFloat(row.total_score) || 0,
-      maxScore: parseFloat(row.max_possible_score) || 0,
-      percentage: row.max_possible_score > 0 
-        ? (parseFloat(row.total_score) / parseFloat(row.max_possible_score)) * 100 
-        : 0,
-      indicatorsAssessed: row.indicators_assessed,
-      totalIndicators: row.total_indicators || indicators.length,
-      completionRate: indicators.length > 0 
-        ? (row.indicators_assessed / indicators.length) * 100 
-        : 0
+      maxScore: 100, // AIMS total max score is 100
+      percentage: parseFloat(row.total_score) || 0,
+      status: row.status,
+      fiscalYear: row.fiscal_year || targetFiscalYear,
+      finalizedAt: row.finalized_at,
+      updatedAt: row.updated_at
     }));
-
+    
+    // Also return a list of agencies for the timeline dropdown
+    const agenciesList = rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      sector: row.sector
+    }));
+    
     res.json({ 
       success: true, 
-      data: scores,
+      agencies: scores,
+      agency_list: agenciesList,
       fiscalYear: targetFiscalYear,
-      totalIndicators: indicators.length
+      totalIndicators: totalIndicators,
+      totalAgencies: rows.length
     });
   } catch (err) {
     console.error('Agency scores error:', err);
-    res.status(500).json({ error: 'Failed to load agency scores' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to load agency scores',
+      details: process.env.NODE_ENV === 'development' ? (err instanceof Error ? err.message : 'Unknown error') : undefined
+    });
   }
 };

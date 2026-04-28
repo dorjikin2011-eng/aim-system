@@ -18,6 +18,7 @@ import {
   CalculatorIcon,
   ArrowPathIcon
 } from '@heroicons/react/24/outline';
+import { CloudArrowUpIcon, LockClosedIcon } from '@heroicons/react/24/outline';
 
 // Auto-scoring components
 import WeightedSumField from './WeightedSumField';
@@ -199,6 +200,12 @@ interface DynamicFormProps {
   showValidation?: boolean;
   mode?: 'test' | 'preview' | 'live' | 'readonly';
   disabled?: boolean;
+  // New props for custom action buttons
+  disableSubmit?: boolean;
+  submitTooltip?: string;
+  onSaveProgress?: () => void;
+  onFinalize?: () => void;
+  showActionButtons?: boolean;
 }
 
 interface UISettings {
@@ -276,7 +283,14 @@ const DynamicForm = forwardRef<DynamicFormRef, DynamicFormProps>(({
   showValidation = true,
   mode = 'live',
   disabled = false,
+  // New props with default values
+  disableSubmit = false,
+  submitTooltip = 'This action is not available yet',
+  onSaveProgress,
+  onFinalize,
+  showActionButtons = true,
 }, ref) => {
+
   const [template, setTemplate] = useState<FormTemplate | null>(providedTemplate || null);
   const [formData, setFormData] = useState<Record<string, any>>(initialData);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
@@ -376,7 +390,7 @@ useImperativeHandle(ref, () => ({
       setLoading(true);
       const templatesResponse = await configService.getFormTemplates();
       if (templatesResponse.success && templatesResponse.data) {
-        const template = templatesResponse.data.find(t => t.id === templateId);
+        const template = templatesResponse.data.find((t: FormTemplate) => t.id === templateId);
         if (template) {
           console.log('✅ TEMPLATE LOADED:', template.name);
           setTemplate(template);
@@ -429,7 +443,7 @@ useImperativeHandle(ref, () => ({
         }
         
         // ICCS
-        if (indicatorId === 'ind_1770114038668_i6jrig8sz' || indicatorId === 'ind_iccs') {
+        if (indicatorId === 'ind_iccs_v3' || indicatorId === 'ind_iccs') {
           newCache[indicatorId].scoringRules = [{
             id: 'default_iccs',
             indicatorId,
@@ -443,7 +457,7 @@ useImperativeHandle(ref, () => ({
           }];
         }
         // Training/Capacity
-        else if (indicatorId === 'ind_1770114038672_noe0zgtjx' || indicatorId === 'ind_capacity') {
+        else if (indicatorId === 'ind_training_v3' || indicatorId === 'ind_capacity') {
           newCache[indicatorId].scoringRules = [{
             id: 'default_capacity',
             indicatorId,
@@ -457,7 +471,7 @@ useImperativeHandle(ref, () => ({
           }];
         }
         // AD
-        else if (indicatorId === 'ind_1770114038673_zuella44q' || indicatorId === 'ind_ad') {
+        else if (indicatorId === 'ind_ad_v3' || indicatorId === 'ind_ad') {
           newCache[indicatorId].scoringRules = [{
             id: 'default_ad',
             indicatorId,
@@ -471,7 +485,7 @@ useImperativeHandle(ref, () => ({
           }];
         }
         // CoC
-        else if (indicatorId === 'ind_coc') {
+        else if (indicatorId === 'ind_coc_v3') {
           newCache[indicatorId].scoringRules = [{
             id: 'default_coc',
             indicatorId,
@@ -485,7 +499,7 @@ useImperativeHandle(ref, () => ({
           }];
         }
         // Cases
-        else if (indicatorId === 'ind_1770114038674_x4z2r2vjh' || indicatorId === 'ind_cases') {
+        else if (indicatorId === 'ind_cases_v3' || indicatorId === 'ind_cases') {
           newCache[indicatorId].scoringRules = [{
             id: 'default_cases',
             indicatorId,
@@ -1133,69 +1147,111 @@ useImperativeHandle(ref, () => ({
       
       {/* Navigation */}
       {totalSections > 1 && (
-        <div className="flex justify-between mt-8 pt-8 border-t border-gray-200">
+  <div className="flex justify-between mt-8 pt-8 border-t border-gray-200">
+    <button
+      type="button"
+      onClick={() => setActiveSection(Math.max(0, activeSection - 1))}
+      disabled={activeSection === 0 || submitting || isFormDisabled}
+      className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50"
+    >
+      Previous
+    </button>
+    
+    {activeSection < totalSections - 1 ? (
+      <button
+        type="button"
+        onClick={() => setActiveSection(Math.min(totalSections - 1, activeSection + 1))}
+        disabled={submitting || isFormDisabled}
+        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+      >
+        Next
+      </button>
+    ) : (
+      <div className="flex gap-3">
+        {/* Save Progress Button */}
+        {showActionButtons && onSaveProgress && (
           <button
             type="button"
-            onClick={() => setActiveSection(Math.max(0, activeSection - 1))}
-            disabled={activeSection === 0 || submitting || isFormDisabled}
-            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50"
+            onClick={onSaveProgress}
+            disabled={submitting || isFormDisabled}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center"
           >
-            Previous
+            <CloudArrowUpIcon className="h-5 w-5 mr-2" />
+            Save Progress
           </button>
-          
-          {activeSection < totalSections - 1 ? (
-            <button
-              type="button"
-              onClick={() => setActiveSection(Math.min(totalSections - 1, activeSection + 1))}
-              disabled={submitting || isFormDisabled}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-            >
-              Next
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={submitting || isFormDisabled}
-              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center"
-            >
-              {submitting ? (
-                <>
-                  <ArrowPathIcon className="h-4 w-4 mr-2 animate-spin" />
-                  Submitting...
-                </>
-              ) : (
-                <>
-                  <CheckIcon className="h-5 w-5 mr-2" />
-                  {template.uiConfig?.submit_button_text || 'Submit'}
-                </>
-              )}
-            </button>
-          )}
-        </div>
-      )}
+        )}
+        
+        {/* Finalize Assessment Button */}
+        {showActionButtons && onFinalize && (
+          <button
+            type="button"
+            onClick={onFinalize}
+            disabled={submitting || isFormDisabled}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center"
+          >
+            <LockClosedIcon className="h-5 w-5 mr-2" />
+            Finalize Assessment
+          </button>
+        )}
+        
+        {/* Submit Button (disabled with tooltip) */}
+        <button
+          type="submit"
+          disabled={true}
+          title={disableSubmit ? submitTooltip : ''}
+          className="px-4 py-2 bg-gray-400 text-white rounded-md cursor-not-allowed flex items-center"
+        >
+          <CheckIcon className="h-5 w-5 mr-2" />
+          {template.uiConfig?.submit_button_text || 'Submit'}
+        </button>
+      </div>
+    )}
+  </div>
+)}
 
       {/* Single-section submit */}
       {totalSections === 1 && !isFormDisabled && (
-        <div className="mt-8 pt-8 border-t border-gray-200 flex justify-end">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center"
-          >
-            {submitting ? (
-              <>
-                <ArrowPathIcon className="h-4 w-4 mr-2 animate-spin" />
-                Submitting...
-              </>
-            ) : (
-              <>
-                <CheckIcon className="h-5 w-5 mr-2" />
-                {template.uiConfig?.submit_button_text || 'Submit'}
-              </>
-            )}
-          </button>
-        </div>
+  <div className="mt-8 pt-8 border-t border-gray-200 flex justify-end">
+    <div className="flex gap-3">
+      {/* Save Progress Button */}
+      {showActionButtons && onSaveProgress && (
+        <button
+          type="button"
+          onClick={onSaveProgress}
+          disabled={submitting || isFormDisabled}
+          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center"
+        >
+          <CloudArrowUpIcon className="h-5 w-5 mr-2" />
+          Save Progress
+        </button>
       )}
+      
+      {/* Finalize Assessment Button */}
+      {showActionButtons && onFinalize && (
+        <button
+          type="button"
+          onClick={onFinalize}
+          disabled={submitting || isFormDisabled}
+          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center"
+        >
+          <LockClosedIcon className="h-5 w-5 mr-2" />
+          Finalize Assessment
+        </button>
+      )}
+      
+      {/* Submit Button (disabled with tooltip) */}
+      <button
+        type="submit"
+        disabled={true}
+        title={disableSubmit ? submitTooltip : ''}
+        className="px-6 py-3 bg-gray-400 text-white rounded-md cursor-not-allowed flex items-center"
+      >
+        <CheckIcon className="h-5 w-5 mr-2" />
+        {template.uiConfig?.submit_button_text || 'Submit'}
+      </button>
+    </div>
+  </div>
+)}
       
       {/* Validation Errors */}
       {showValidation && Object.keys(validationErrors).length > 0 && (

@@ -1,4 +1,4 @@
-// backend/src/models/ScoringRule.ts
+// backend/src/models/ScoringRule.ts - POSTGRESQL FIXED VERSION
 
 import { getDB, getAsync, allAsync, runAsync } from './db';
 
@@ -71,7 +71,7 @@ export class ScoringRuleModel {
     const db = getDB();
     const rows = await allAsync<any>(
       db,
-      'SELECT * FROM scoring_rules WHERE indicator_id = ?',
+      'SELECT * FROM scoring_rules WHERE indicator_id = $1',
       [indicatorId]
     );
     
@@ -85,7 +85,7 @@ export class ScoringRuleModel {
     const db = getDB();
     const row = await getAsync<any>(
       db,
-      'SELECT * FROM scoring_rules WHERE id = ?',
+      'SELECT * FROM scoring_rules WHERE id = $1',
       [id]
     );
     
@@ -125,12 +125,13 @@ export class ScoringRuleModel {
       };
     }
     
+    // FIXED: Use PostgreSQL $ placeholders and boolean
     await runAsync(
       db,
       `INSERT INTO scoring_rules (
         id, indicator_id, parameter_code, scoring_type, rule_config,
         description, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         id,
         rule.indicatorId,
@@ -138,7 +139,7 @@ export class ScoringRuleModel {
         rule.scoringType,
         JSON.stringify(ruleConfig),
         rule.description || null,
-        rule.isActive ? 1 : 0,
+        rule.isActive === true, // PostgreSQL boolean
         now,
         now
       ]
@@ -155,26 +156,27 @@ export class ScoringRuleModel {
     
     const fields: string[] = [];
     const values: any[] = [];
+    let paramIndex = 1;
     
     if (updates.indicatorId !== undefined) {
-      fields.push('indicator_id = ?');
+      fields.push(`indicator_id = $${paramIndex++}`);
       values.push(updates.indicatorId);
     }
     if (updates.parameterCode !== undefined) {
-      fields.push('parameter_code = ?');
+      fields.push(`parameter_code = $${paramIndex++}`);
       values.push(updates.parameterCode);
     }
     if (updates.scoringType !== undefined) {
-      fields.push('scoring_type = ?');
+      fields.push(`scoring_type = $${paramIndex++}`);
       values.push(updates.scoringType);
     }
     if (updates.description !== undefined) {
-      fields.push('description = ?');
+      fields.push(`description = $${paramIndex++}`);
       values.push(updates.description);
     }
     if (updates.isActive !== undefined) {
-      fields.push('is_active = ?');
-      values.push(updates.isActive ? 1 : 0);
+      fields.push(`is_active = $${paramIndex++}`);
+      values.push(updates.isActive === true); // PostgreSQL boolean
     }
     
     // Update rule_config if scoring type or specific config changed
@@ -204,11 +206,11 @@ export class ScoringRuleModel {
         };
       }
       
-      fields.push('rule_config = ?');
+      fields.push(`rule_config = $${paramIndex++}`);
       values.push(JSON.stringify(ruleConfig));
     }
     
-    fields.push('updated_at = ?');
+    fields.push(`updated_at = $${paramIndex++}`);
     values.push(new Date().toISOString());
     values.push(id);
     
@@ -218,7 +220,7 @@ export class ScoringRuleModel {
     
     await runAsync(
       db,
-      `UPDATE scoring_rules SET ${fields.join(', ')} WHERE id = ?`,
+      `UPDATE scoring_rules SET ${fields.join(', ')} WHERE id = $${paramIndex++}`,
       values
     );
     
@@ -233,7 +235,7 @@ export class ScoringRuleModel {
     
     await runAsync(
       db,
-      'DELETE FROM scoring_rules WHERE id = ?',
+      'DELETE FROM scoring_rules WHERE id = $1',
       [id]
     );
     
@@ -428,7 +430,7 @@ export class ScoringRuleModel {
   }
 
   /**
-   * Map database row to ScoringRule
+   * Map database row to ScoringRule - FIXED: PostgreSQL boolean
    */
   private static mapRowToScoringRule(row: any): ScoringRule {
     const ruleConfig = row.rule_config ? JSON.parse(row.rule_config) : {};
@@ -439,7 +441,7 @@ export class ScoringRuleModel {
       parameterCode: row.parameter_code,
       scoringType: row.scoring_type || 'boolean',
       description: row.description,
-      isActive: row.is_active === 1,
+      isActive: row.is_active === true, // PostgreSQL boolean
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };

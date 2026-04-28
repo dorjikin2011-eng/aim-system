@@ -4,6 +4,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { tmpdir } from 'os';  // ✅ Added for Vercel temp directory
 
 // Define MulterFile type locally (Multer does not export File type)
 type MulterFile = {
@@ -20,15 +21,15 @@ type MulterFile = {
 
 const router = Router();
 
-// Ensure uploads directory exists
-const uploadDir = './uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+// ✅ Vercel-compatible upload directory: use /tmp (writable in serverless)
+const UPLOAD_DIR = path.join(tmpdir(), 'uploads');
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
 // Multer storage configuration
 const storage = multer.diskStorage({
-  destination: './uploads/',
+  destination: UPLOAD_DIR,  // ✅ Use temp directory
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
@@ -51,6 +52,7 @@ const upload = multer({
 // Upload route
 router.post('/upload', upload.array('files'), (req: Request, res: Response) => {
   try {
+    // ✅ Return relative paths (frontend doesn't need to know it's /tmp)
     const files = (req.files as MulterFile[]).map(file => `/uploads/${file.filename}`);
     res.json({ success: true, files });
   } catch (error) {

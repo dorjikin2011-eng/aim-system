@@ -26,42 +26,55 @@ export const getAuditLogs = async (req: Request, res: Response) => {
       WHERE 1=1
     `;
     const params: any[] = [];
+    let paramCounter = 1;
 
     // Filter by action type
     if (action) {
-      query += ' AND al.action = ?';
+      query += ` AND al.action = $${paramCounter}`;
       params.push(action);
+      paramCounter++;
     }
     
     // Filter by actor (search in user_id)
     if (actor) {
-      query += ' AND al.user_id LIKE ?';
+      query += ` AND al.user_id LIKE $${paramCounter}`;
       params.push(`%${actor}%`);
+      paramCounter++;
     }
     
     // Filter by start date
     if (startDate) {
-      query += ' AND al.created_at >= ?';
+      query += ` AND al.created_at >= $${paramCounter}`;
       params.push(new Date(startDate as string).toISOString());
+      paramCounter++;
     }
     
     // Filter by end date
     if (endDate) {
       const end = new Date(endDate as string);
       end.setHours(23, 59, 59, 999);
-      query += ' AND al.created_at <= ?';
+      query += ` AND al.created_at <= $${paramCounter}`;
       params.push(end.toISOString());
+      paramCounter++;
     }
 
     query += ' ORDER BY al.created_at DESC LIMIT 500';
 
-    const logs = await allAsync<any[]>(db, query, params);
+    // FIXED: Use correct generic type
+    const logs = await allAsync<any>(db, query, params);
 
     // Format logs for frontend
     const formattedLogs = logs.map(log => {
       let details = {};
       try {
-        details = log.details ? JSON.parse(log.details) : {};
+        // Handle PostgreSQL JSON type
+        if (log.details) {
+          if (typeof log.details === 'string') {
+            details = JSON.parse(log.details);
+          } else if (typeof log.details === 'object') {
+            details = log.details;
+          }
+        }
       } catch {
         details = { raw: log.details };
       }
@@ -121,33 +134,39 @@ export const exportAuditLogs = async (req: Request, res: Response) => {
       WHERE 1=1
     `;
     const params: any[] = [];
+    let paramCounter = 1;
 
     // Apply filters
     if (action) { 
-      query += ' AND al.action = ?';
-      params.push(action); 
+      query += ` AND al.action = $${paramCounter}`;
+      params.push(action);
+      paramCounter++;
     }
     
     if (actor) { 
-      query += ' AND al.user_id LIKE ?';
+      query += ` AND al.user_id LIKE $${paramCounter}`;
       params.push(`%${actor}%`);
+      paramCounter++;
     }
     
     if (startDate) { 
-      query += ' AND al.created_at >= ?';
-      params.push(new Date(startDate as string).toISOString()); 
+      query += ` AND al.created_at >= $${paramCounter}`;
+      params.push(new Date(startDate as string).toISOString());
+      paramCounter++;
     }
     
     if (endDate) { 
       const end = new Date(endDate as string);
       end.setHours(23, 59, 59, 999);
-      query += ' AND al.created_at <= ?';
-      params.push(end.toISOString()); 
+      query += ` AND al.created_at <= $${paramCounter}`;
+      params.push(end.toISOString());
+      paramCounter++;
     }
 
     query += ' ORDER BY al.created_at DESC';
 
-    const logs = await allAsync<any[]>(db, query, params);
+    // FIXED: Use correct generic type
+    const logs = await allAsync<any>(db, query, params);
 
     // Generate CSV content
     let csvContent = '';
@@ -160,10 +179,11 @@ export const exportAuditLogs = async (req: Request, res: Response) => {
           // Handle JSON details
           if (header === 'Details' && value) {
             try {
+              // Handle both string and object JSON
               const parsed = typeof value === 'string' ? JSON.parse(value) : value;
               return JSON.stringify(parsed);
             } catch {
-              return value;
+              return String(value);
             }
           }
           
@@ -213,7 +233,8 @@ export const getAuditLogStats = async (req: Request, res: Response) => {
     const totalCount = totalCountResult?.count || 0;
 
     // Get actions by type
-    const actionsByType = await allAsync<any[]>(db, `
+    // FIXED: Use correct generic type
+    const actionsByType = await allAsync<any>(db, `
       SELECT action, COUNT(*) as count 
       FROM audit_logs 
       GROUP BY action 
@@ -221,7 +242,8 @@ export const getAuditLogStats = async (req: Request, res: Response) => {
     `, []);
 
     // Get top actors (using user_id)
-    const topActors = await allAsync<any[]>(db, `
+    // FIXED: Use correct generic type
+    const topActors = await allAsync<any>(db, `
       SELECT 
         al.user_id as email,
         al.user_id as name,
@@ -234,12 +256,13 @@ export const getAuditLogStats = async (req: Request, res: Response) => {
     `, []);
 
     // Get recent activity (last 7 days)
-    const recentActivity = await allAsync<any[]>(db, `
+    // FIXED: PostgreSQL date syntax
+    const recentActivity = await allAsync<any>(db, `
       SELECT 
         DATE(al.created_at) as date,
         COUNT(*) as count
       FROM audit_logs al
-      WHERE al.created_at >= datetime('now', '-7 days')
+      WHERE al.created_at >= CURRENT_DATE - INTERVAL '7 days'
       GROUP BY DATE(al.created_at)
       ORDER BY date DESC
     `, []);
@@ -283,7 +306,7 @@ export const getAuditLogById = async (req: Request, res: Response) => {
         al.user_agent,
         al.created_at
       FROM audit_logs al
-      WHERE al.id = ?
+      WHERE al.id = $1
     `, [id]);
 
     if (!log) {
@@ -293,14 +316,17 @@ export const getAuditLogById = async (req: Request, res: Response) => {
       });
     }
 
-    // Parse details if it's a JSON string
+    // Parse details if it's a JSON string or object
     let details = log.details;
-    if (details && typeof details === 'string') {
-      try {
-        details = JSON.parse(details);
-      } catch {
-        // Keep as string if not valid JSON
+    if (details) {
+      if (typeof details === 'string') {
+        try {
+          details = JSON.parse(details);
+        } catch {
+          // Keep as string if not valid JSON
+        }
       }
+      // If it's already an object, keep as is
     }
 
     res.json({

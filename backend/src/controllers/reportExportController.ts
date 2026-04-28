@@ -13,26 +13,29 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
     const targetFiscalYear = fiscal_year || '2025-26';
 
     // Fetch all active indicators
-    const indicators = await allAsync<any[]>(db, 
-      `SELECT id, code, name, category, weight, max_score as maxScore 
+    // FIXED: Changed is_active = 1 to true, and generic type
+    const indicators = await allAsync<any>(
+      db, 
+      `SELECT id, code, name, category, weight, max_score as "maxScore" 
        FROM indicators 
-       WHERE is_active = 1 
+       WHERE is_active = true 
        ORDER BY display_order, category`,
       []
     );
 
     // Get category groupings
-    const categories = Array.from(new Set(indicators.map(ind => ind.category)));
+    const categories = Array.from(new Set(indicators.map((ind: any) => ind.category)));
 
     // Fetch system thresholds from system_config
     let highThreshold = 80;
     let mediumThreshold = 50;
     
     try {
+      // FIXED: Changed ? to $1
       const highConfig = await getAsync<any>(
         db,
-        `SELECT config_value FROM system_config WHERE config_key = 'integrity.threshold.high'`,
-        []
+        `SELECT config_value FROM system_config WHERE config_key = $1`,
+        ['integrity.threshold.high']
       );
       if (highConfig && highConfig.config_value) {
         highThreshold = Number(highConfig.config_value);
@@ -40,8 +43,8 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
       
       const mediumConfig = await getAsync<any>(
         db,
-        `SELECT config_value FROM system_config WHERE config_key = 'integrity.threshold.medium'`,
-        []
+        `SELECT config_value FROM system_config WHERE config_key = $1`,
+        ['integrity.threshold.medium']
       );
       if (mediumConfig && mediumConfig.config_value) {
         mediumThreshold = Number(mediumConfig.config_value);
@@ -51,7 +54,9 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
     }
 
     // Fetch agency data with dynamic indicators
-    const agencies = await allAsync<any[]>(db, 
+    // FIXED: Updated to use assessments table instead of indicator_data
+    const agencies = await allAsync<any>(
+      db, 
       `SELECT 
         a.id, 
         a.name AS agency, 
@@ -59,42 +64,41 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
         a.contact_email, 
         a.contact_phone,
         a.status,
-        SUM(id.score) as total_score,
-        SUM(i.weight) as max_score
+        COALESCE(ass.overall_score, 0) as total_score,
+        100 as max_score
       FROM agencies a
-      LEFT JOIN indicator_data id ON a.id = id.agency_id 
-        AND id.fiscal_year = ?
-        AND id.status = 'final'
-      LEFT JOIN indicators i ON id.indicator_id = i.id AND i.is_active = 1
+      LEFT JOIN assessments ass ON a.id = ass.agency_id 
+        AND ass.fiscal_year = $1
+        AND ass.status = 'FINALIZED'
       WHERE a.status = 'active'
-      GROUP BY a.id, a.name, a.sector, a.contact_email, a.contact_phone, a.status
+      GROUP BY a.id, a.name, a.sector, a.contact_email, a.contact_phone, a.status, ass.overall_score
       ORDER BY total_score DESC`,
       [targetFiscalYear]
     );
 
-    // Fetch individual indicator scores for each agency
-    const indicatorScores = await allAsync<any[]>(db,
+    // Fetch individual indicator scores for each agency from dynamic_assessment_responses
+    // FIXED: Updated to use dynamic_assessment_responses table
+    const indicatorScores = await allAsync<any>(
+      db,
       `SELECT 
         a.id as agency_id,
         a.name as agency_name,
         i.id as indicator_id,
         i.code as indicator_code,
-        id.score
+        COALESCE(dar.final_score, 0) as score
       FROM agencies a
       CROSS JOIN indicators i
-      LEFT JOIN indicator_data id ON a.id = id.agency_id 
-        AND id.indicator_id = i.id
-        AND id.fiscal_year = ?
-        AND id.status = 'final'
+      LEFT JOIN assessments ass ON a.id = ass.agency_id AND ass.fiscal_year = $1
+      LEFT JOIN dynamic_assessment_responses dar ON ass.id = dar.assessment_id AND dar.indicator_id = i.id
       WHERE a.status = 'active'
-        AND i.is_active = 1
+        AND i.is_active = true
       ORDER BY a.name, i.display_order`,
       [targetFiscalYear]
     );
 
     // Create a map of agency scores
     const scoreMap = new Map();
-    indicatorScores.forEach(score => {
+    indicatorScores.forEach((score: any) => {
       const key = `${score.agency_id}_${score.indicator_id}`;
       scoreMap.set(key, score.score || 0);
     });
@@ -146,7 +150,7 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
       { header: 'Max Score', key: 'maxScore', width: 10 }
     ];
 
-    indicators.forEach(ind => {
+    indicators.forEach((ind: any) => {
       configSheet.addRow({
         code: ind.code || '',
         name: ind.name,
@@ -179,12 +183,12 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
     // Add category subtotals columns
     categories.forEach(category => {
       scoreColumns.push({
-        header: `${category.replace('_', ' ')} Score`,
+        header: `${String(category).replace(/_/g, ' ')} Score`,
         key: `${category}_score`,
         width: 18
       });
       scoreColumns.push({
-        header: `${category.replace('_', ' ')} %`,
+        header: `${String(category).replace(/_/g, ' ')} %`,
         key: `${category}_percent`,
         width: 15
       });
@@ -204,7 +208,7 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
 
     // Group indicators by category
     const indicatorsByCategory: Record<string, any[]> = {};
-    indicators.forEach(ind => {
+    indicators.forEach((ind: any) => {
       if (!indicatorsByCategory[ind.category]) {
         indicatorsByCategory[ind.category] = [];
       }
@@ -212,7 +216,7 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
     });
 
     // Process each agency
-    agencies.forEach(agencyRow => {
+    agencies.forEach((agencyRow: any) => {
       const agencyData: any = {
         agency: agencyRow.agency,
         sector: agencyRow.sector,
@@ -244,8 +248,8 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
       });
 
       // Overall scores
-      const totalScore = parseFloat(agencyRow.total_score) || 0;
-      const maxScore = parseFloat(agencyRow.max_score) || indicators.reduce((sum, ind) => sum + (ind.maxScore || 100), 0);
+      const totalScore = Number(agencyRow.total_score) || 0;
+      const maxScore = Number(agencyRow.max_score) || indicators.reduce((sum: number, ind: any) => sum + (ind.maxScore || 100), 0);
       const percentage = maxScore > 0 ? (totalScore / maxScore) * 100 : 0;
       
       agencyData.total_score = totalScore.toFixed(1);
@@ -282,7 +286,7 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
         { header: 'Sector', key: 'sector', width: 15 }
       ];
 
-      indicators.forEach(ind => {
+      indicators.forEach((ind: any) => {
         detailColumns.push({
           header: ind.code || ind.name.substring(0, 20),
           key: `ind_${ind.id}`,
@@ -297,20 +301,20 @@ export const exportReportToExcel = async (req: Request, res: Response) => {
 
       detailSheet.columns = detailColumns;
 
-      agencies.forEach(agencyRow => {
+      agencies.forEach((agencyRow: any) => {
         const detailRow: any = {
           agency: agencyRow.agency,
           sector: agencyRow.sector
         };
 
         let total = 0;
-        indicators.forEach(ind => {
+        indicators.forEach((ind: any) => {
           const score = scoreMap.get(`${agencyRow.id}_${ind.id}`) || 0;
           detailRow[`ind_${ind.id}`] = score.toFixed(1);
           total += score;
         });
 
-        const totalMaxScore = indicators.reduce((sum, ind) => sum + (ind.maxScore || 100), 0);
+        const totalMaxScore = indicators.reduce((sum: number, ind: any) => sum + (ind.maxScore || 100), 0);
         detailRow.total = total.toFixed(1);
         detailRow.percent = totalMaxScore > 0 ? `${((total / totalMaxScore) * 100).toFixed(1)}%` : '0%';
         

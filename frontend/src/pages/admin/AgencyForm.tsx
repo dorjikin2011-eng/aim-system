@@ -54,24 +54,43 @@ export default function AgencyForm() {
 
   const fetchAgency = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/admin/agencies/${id}`);
+      const res = await fetch(`${API_BASE}/api/admin/agencies/${id}`, {
+        credentials: 'include',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
       if (!res.ok) {
         throw new Error('Failed to load agency');
       }
+      
       const data = await res.json();
       // Handle both { success: true, agency: {...} } and direct agency object
       const agencyData = data.agency || data;
       
-      // Map backend snake_case to frontend state if necessary, 
-      // but here we ensure the state matches what the form expects
+      // Map backend snake_case to frontend state if necessary
       setAgency({
-        ...agencyData,
-        // Ensure fields exist to avoid uncontrolled input warnings
+        name: agencyData.name || '',
+        sector: agencyData.sector || '',
+        agency_type: agencyData.agency_type || '',
+        status: agencyData.status || 'active',
+        hoa_name: agencyData.hoa_name || '',
+        hoa_email: agencyData.hoa_email || '',
+        hoa_phone: agencyData.hoa_phone || '',
+        focal_person_name: agencyData.focal_person_name || '',
+        focal_person_email: agencyData.focal_person_email || '',
+        focal_person_phone: agencyData.focal_person_phone || '',
+        contact_person: agencyData.contact_person || agencyData.contactPerson || '',
         contact_email: agencyData.contact_email || agencyData.contactEmail || '',
         contact_phone: agencyData.contact_phone || agencyData.contactPhone || '',
+        address: agencyData.address || '',
+        website: agencyData.website || '',
+        hoa_user_id: agencyData.hoa_user_id || agencyData.hoaUserId || ''
       });
     } catch (err) {
       setError('Failed to load agency');
+      console.error(err);
     }
   };
 
@@ -81,42 +100,60 @@ export default function AgencyForm() {
     setError('');
 
     try {
-      const url = id ? `${API_BASE}/api/admin/agencies/${id}` : '${API_BASE}/api/admin/agencies';
+      // ✅ FIXED: Use backticks for template literal
+      const url = id ? `${API_BASE}/api/admin/agencies/${id}` : `${API_BASE}/api/admin/agencies`;
       const method = id ? 'PUT' : 'POST';
 
-      // ✅ FIXED: Map frontend state to backend expected format
-    const payload = {
-      name: agency.name,
-      sector: agency.sector,
-      agency_type: agency.agency_type,
-      status: agency.status,
-      address: agency.address,
-      website: agency.website,
-      // ✅ ADD MISSING HoA FIELDS
-      hoa_name: agency.hoa_name,
-      hoa_email: agency.hoa_email,
-      hoa_phone: agency.hoa_phone,
-      // Backend expects camelCase for contact fields
-      contactEmail: agency.contact_email,
-      contactPhone: agency.contact_phone,
-      contactPerson: agency.contact_person,
-      hoaUserId: agency.hoa_user_id
-    };
+      // Get auth token
+      const token = localStorage.getItem('token');
+
+      // Prepare payload matching backend expectations
+      const payload = {
+        name: agency.name,
+        sector: agency.sector,
+        agency_type: agency.agency_type,
+        status: agency.status,
+        address: agency.address,
+        website: agency.website,
+        // HoA fields
+        hoa_name: agency.hoa_name,
+        hoa_email: agency.hoa_email,
+        hoa_phone: agency.hoa_phone,
+        // Focal person fields
+        focal_person_name: agency.focal_person_name,
+        focal_person_email: agency.focal_person_email,
+        focal_person_phone: agency.focal_person_phone,
+        // Contact fields - backend expects camelCase
+        contactEmail: agency.contact_email,
+        contactPhone: agency.contact_phone,
+        contactPerson: agency.contact_person,
+        hoaUserId: agency.hoa_user_id
+      };
+
+      console.log(`📤 ${method} request to:`, url);
+      console.log('📦 Payload:', payload);
 
       const res = await fetch(url, {
         method,
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        },
         body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Operation failed');
+        const err = await res.json().catch(() => ({ error: 'Operation failed' }));
+        throw new Error(err.error || err.message || 'Operation failed');
       }
 
+      const result = await res.json();
+      console.log('✅ Success:', result);
+      
       navigate('/admin/agencies');
     } catch (err: any) {
+      console.error('❌ Error:', err);
       setError(err.message);
       setLoading(false);
     }

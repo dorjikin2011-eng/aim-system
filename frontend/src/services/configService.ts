@@ -1,19 +1,19 @@
-// frontend/src/services/configService.ts - FULL UPDATED VERSION
-
+// frontend/src/services/configService.ts
 import type { 
   IndicatorDefinition, 
   FormTemplate, 
   ConfigurationVersion,
   IntegrityThresholds,
-  ValidationResult,
-  ApiResponse,
   CreateIndicatorInput,
-  UpdateIndicatorInput
+  UpdateIndicatorInput,
+  ApiResponse
 } from '../types/config';
 
 import { API_BASE } from '../config';
 
-// Helper: convert camelCase <-> snake_case
+// ---------------------------
+// Helpers: convert camelCase <-> snake_case
+// ---------------------------
 const toSnakeCase = (obj: any): any => {
   if (obj === null || typeof obj !== 'object') return obj;
   if (Array.isArray(obj)) return obj.map(toSnakeCase);
@@ -34,6 +34,45 @@ const toCamelCase = (obj: any): any => {
     result[camelKey] = toCamelCase(value);
   }
   return result;
+};
+
+// ---------------------------
+// Generic API Call Helper
+// ---------------------------
+// This helper ensures the /api prefix is ALWAYS included and uses absolute URLs
+const apiCall = async (endpoint: string, options: RequestInit = {}) => {
+  // 1. Clean the base URL (remove trailing slash)
+  const base = API_BASE.replace(/\/$/, '');
+  
+  // 2. Clean the endpoint (ensure it starts with / and doesn't double up /api)
+  let path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  if (!path.startsWith('/api')) {
+    path = `/api${path}`;
+  }
+
+  const url = `${base}${path}`;
+  
+  console.log(`🚀 ConfigService calling: ${url}`);
+
+  const response = await fetch(url, { 
+    credentials: 'include', 
+    ...options 
+  });
+
+  // Handle potential non-JSON responses (like HTML error pages) gracefully
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    console.error('❌ Failed to parse JSON response. Received:', text.substring(0, 100));
+    throw new Error('Invalid server response. Please check if the backend is reachable.');
+  }
+
+  if (data.success && data.data) {
+    data.data = toCamelCase(data.data);
+  }
+  return data;
 };
 
 // ---------------------------
@@ -60,279 +99,211 @@ interface CalculateScoreRequest {
   templateId?: string;
 }
 
+// ---------------------------
+// ConfigService Class
+// ---------------------------
 class ConfigService {
   // ----------------------
   // SYSTEM CONFIG
   // ----------------------
-  async getSystemConfig(): Promise<ApiResponse<IntegrityThresholds>> {
-    const response = await fetch(`${API_BASE}/admin/config`);
-    const data = await response.json();
-    if (data.success && data.data) data.data = toCamelCase(data.data);
-    return data;
+  getSystemConfig(): Promise<ApiResponse<IntegrityThresholds>> { 
+    return apiCall('/admin/config'); 
   }
-
-  async updateSystemConfig(config: IntegrityThresholds): Promise<ApiResponse> {
-    const response = await fetch(`${API_BASE}/admin/config`, {
+  
+  updateSystemConfig(config: IntegrityThresholds): Promise<ApiResponse> {
+    return apiCall('/admin/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(config))
     });
-    return response.json();
   }
 
   // ----------------------
   // INDICATOR MANAGEMENT
   // ----------------------
-  async getIndicators(params?: {
+  getIndicators(params?: {
     category?: string;
     activeOnly?: boolean;
     includeParameters?: boolean;
     includeRules?: boolean;
     search?: string;
   }): Promise<ApiResponse<IndicatorDefinition[]>> {
-    const queryParams = new URLSearchParams();
-    if (params?.category) queryParams.append('category', params.category);
-    if (params?.activeOnly !== undefined) queryParams.append('active_only', String(params.activeOnly));
-    if (params?.includeParameters !== undefined) queryParams.append('include_parameters', String(params.includeParameters));
-    if (params?.includeRules !== undefined) queryParams.append('include_rules', String(params.includeRules));
-    if (params?.search) queryParams.append('search', params.search);
-
-    const response = await fetch(`${API_BASE}/indicator-config?${queryParams}`);
-    const data = await response.json();
-    if (data.success && data.data) data.data = data.data.map(toCamelCase);
-    return data;
+    const query = new URLSearchParams();
+    if (params?.category) query.append('category', params.category);
+    if (params?.activeOnly !== undefined) query.append('active_only', String(params.activeOnly));
+    if (params?.includeParameters !== undefined) query.append('include_parameters', String(params.includeParameters));
+    if (params?.includeRules !== undefined) query.append('include_rules', String(params.includeRules));
+    if (params?.search) query.append('search', params.search);
+    return apiCall(`/indicator-config?${query}`);
   }
 
-  async getIndicator(id: string): Promise<ApiResponse<IndicatorDefinition>> {
-    const response = await fetch(`${API_BASE}/indicator-config/${id}`);
-    const data = await response.json();
-    if (data.success && data.data) data.data = toCamelCase(data.data);
-    return data;
+  getIndicator(id: string): Promise<ApiResponse<IndicatorDefinition>> { 
+    return apiCall(`/indicator-config/${id}`); 
   }
 
-  async createIndicator(indicator: CreateIndicatorInput): Promise<ApiResponse<IndicatorDefinition>> {
-    const response = await fetch(`${API_BASE}/indicator-config`, {
+  createIndicator(indicator: CreateIndicatorInput): Promise<ApiResponse<IndicatorDefinition>> {
+    return apiCall('/indicator-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(indicator))
     });
-    const data = await response.json();
-    if (data.success && data.data) data.data = toCamelCase(data.data);
-    return data;
   }
 
-  async updateIndicator(id: string, updates: UpdateIndicatorInput): Promise<ApiResponse<IndicatorDefinition>> {
-    const response = await fetch(`${API_BASE}/indicator-config/${id}`, {
+  updateIndicator(id: string, updates: UpdateIndicatorInput): Promise<ApiResponse<IndicatorDefinition>> {
+    return apiCall(`/indicator-config/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(updates))
     });
-    const data = await response.json();
-    if (data.success && data.data) data.data = toCamelCase(data.data);
-    return data;
   }
 
-  async deleteIndicator(id: string, hardDelete: boolean = false): Promise<ApiResponse> {
-    const response = await fetch(`${API_BASE}/indicator-config/${id}?hard_delete=${hardDelete}`, { method: 'DELETE' });
-    return response.json();
+  deleteIndicator(id: string, hardDelete: boolean = false): Promise<ApiResponse> {
+    return apiCall(`/indicator-config/${id}?hard_delete=${hardDelete}`, { method: 'DELETE' });
   }
 
-  async reorderIndicators(category: string, orderedIds: string[]): Promise<ApiResponse> {
-    const response = await fetch(`${API_BASE}/indicator-config/category/${category}/reorder`, {
+  reorderIndicators(category: string, orderedIds: string[]): Promise<ApiResponse> {
+    return apiCall(`/indicator-config/category/${category}/reorder`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ordered_ids: orderedIds })
     });
-    return response.json();
   }
 
-  async validateIndicator(indicator: Partial<IndicatorDefinition>): Promise<ApiResponse<ValidationResult>> {
-    const response = await fetch(`${API_BASE}/indicator-config/validate`, {
+  validateIndicator(indicator: Partial<IndicatorDefinition>): Promise<ApiResponse> {
+    return apiCall('/indicator-config/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(indicator))
     });
-    const data = await response.json();
-    if (data.success && data.data) data.data = toCamelCase(data.data);
-    return data;
   }
 
-  async getCompleteConfiguration(): Promise<ApiResponse<IndicatorDefinition[]>> {
-    const response = await fetch(`${API_BASE}/indicator-config/complete`);
-    const data = await response.json();
-    if (data.success && data.data) data.data = data.data.map(toCamelCase);
-    return data;
+  getCompleteConfiguration(): Promise<ApiResponse<IndicatorDefinition[]>> { 
+    return apiCall('/indicator-config/complete'); 
   }
 
   // ----------------------
   // FORM TEMPLATES
   // ----------------------
-  async getFormTemplates(params?: { category?: string; activeOnly?: boolean }): Promise<ApiResponse<FormTemplate[]>> {
+  getFormTemplates(params?: { category?: string; activeOnly?: boolean }): Promise<ApiResponse<FormTemplate[]>> {
     const query = new URLSearchParams();
     if (params?.category) query.append('category', params.category);
     if (params?.activeOnly !== undefined) query.append('active_only', String(params.activeOnly));
-
-    const response = await fetch(`${API_BASE}/form-templates?${query}`);
-    const data = await response.json();
-    if (data.success && data.data) data.data = data.data.map(toCamelCase);
-    return data;
+    return apiCall(`/form-templates?${query}`);
   }
 
-  async createFormTemplate(template: Omit<FormTemplate, 'id' | 'createdAt' | 'updatedAt' | 'version'>): Promise<ApiResponse<FormTemplate>> {
-    const response = await fetch(`${API_BASE}/form-templates`, {
+  createFormTemplate(template: Omit<FormTemplate, 'id' | 'createdAt' | 'updatedAt' | 'version'>): Promise<ApiResponse<FormTemplate>> {
+    return apiCall('/form-templates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(template))
     });
-    const data = await response.json();
-    if (data.success && data.data) data.data = toCamelCase(data.data);
-    return data;
   }
 
-  async updateFormTemplate(id: string, updates: Partial<FormTemplate>): Promise<ApiResponse<FormTemplate>> {
-    const response = await fetch(`${API_BASE}/form-templates/${id}`, {
+  updateFormTemplate(id: string, updates: Partial<FormTemplate>): Promise<ApiResponse<FormTemplate>> {
+    return apiCall(`/form-templates/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(updates))
     });
-    const data = await response.json();
-    if (data.success && data.data) data.data = toCamelCase(data.data);
-    return data;
   }
 
-  async deleteFormTemplate(id: string, hardDelete: boolean = false): Promise<ApiResponse> {
-    const response = await fetch(`${API_BASE}/form-templates/${id}?hard_delete=${hardDelete}`, { method: 'DELETE' });
-    return response.json();
+  deleteFormTemplate(id: string, hardDelete: boolean = false): Promise<ApiResponse> {
+    return apiCall(`/form-templates/${id}?hard_delete=${hardDelete}`, { method: 'DELETE' });
   }
 
   // ----------------------
   // CONFIGURATION VERSIONS
   // ----------------------
-  async getConfigurationVersions(): Promise<ApiResponse<ConfigurationVersion[]>> {
-    const response = await fetch(`${API_BASE}/config/versions`);
-    const data = await response.json();
-    if (data.success && data.data) data.data = data.data.map(toCamelCase);
-    return data;
+  getConfigurationVersions(): Promise<ApiResponse<ConfigurationVersion[]>> { 
+    return apiCall('/config/versions'); 
   }
 
-  async createConfigurationVersion(version: Omit<ConfigurationVersion, 'id' | 'createdAt' | 'appliedAt' | 'appliedBy'>): Promise<ApiResponse<ConfigurationVersion>> {
-    const response = await fetch(`${API_BASE}/config/versions`, {
+  createConfigurationVersion(version: Omit<ConfigurationVersion, 'id' | 'createdAt' | 'appliedAt' | 'appliedBy'>): Promise<ApiResponse<ConfigurationVersion>> {
+    return apiCall('/config/versions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(version))
     });
-    const data = await response.json();
-    if (data.success && data.data) data.data = toCamelCase(data.data);
-    return data;
   }
 
-  async applyConfigurationVersion(versionId: string): Promise<ApiResponse> {
-    const response = await fetch(`${API_BASE}/config/versions/${versionId}/apply`, { method: 'PUT' });
-    return response.json();
+  applyConfigurationVersion(versionId: string): Promise<ApiResponse> {
+    return apiCall(`/config/versions/${versionId}/apply`, { method: 'PUT' });
   }
 
   // ----------------------
   // ASSESSMENT METHODS
   // ----------------------
-  async saveIndicatorAssessment(data: SaveIndicatorAssessmentRequest): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/save`, {
+  saveIndicatorAssessment(data: SaveIndicatorAssessmentRequest): Promise<ApiResponse<any>> {
+    return apiCall('/agency/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(data))
     });
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
   }
 
-  async saveAllAssessments(data: SaveAllAssessmentsRequest): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/save-all`, {
+  saveAllAssessments(data: SaveAllAssessmentsRequest): Promise<ApiResponse<any>> {
+    return apiCall('/agency/save-all', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(data))
     });
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
   }
 
-  async calculateIndicatorScore(data: CalculateScoreRequest): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/calculate-score`, {
+  calculateIndicatorScore(data: CalculateScoreRequest): Promise<ApiResponse<any>> {
+    return apiCall('/agency/calculate-score', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(toSnakeCase(data))
     });
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
   }
 
-  async getAssessmentProgress(agencyId: string): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/progress/${agencyId}`);
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
+  getAssessmentProgress(agencyId: string): Promise<ApiResponse<any>> { 
+    return apiCall(`/agency/progress/${agencyId}`); 
+  }
+  
+  getFullAssessment(agencyId: string, fiscalYear?: string): Promise<ApiResponse<any>> {
+    const query = fiscalYear ? `?fy=${fiscalYear}` : '';
+    return apiCall(`/agency/full/${agencyId}${query}`);
+  }
+  
+  getAssessmentStats(agencyId: string): Promise<ApiResponse<any>> { 
+    return apiCall(`/agency/stats/${agencyId}`); 
   }
 
-  async getFullAssessment(agencyId: string, fiscalYear?: string): Promise<ApiResponse<any>> {
-    const query = new URLSearchParams();
-    if (fiscalYear) query.append('fy', fiscalYear);
-    const response = await fetch(`${API_BASE}/agency/full/${agencyId}?${query}`);
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
-  }
-
-  async getAssessmentStats(agencyId: string): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/stats/${agencyId}`);
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
-  }
-
-  async submitAssessment(agencyId: string, submittedAt?: string): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/submit`, {
+  submitAssessment(agencyId: string, submittedAt?: string): Promise<ApiResponse<any>> {
+    return apiCall('/agency/submit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agency_id: agencyId, submitted_at: submittedAt || new Date().toISOString() })
     });
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
   }
 
-  async validateAssessment(agencyId: string, validatedBy?: string): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/validate/${agencyId}`, {
+  validateAssessment(agencyId: string, validatedBy?: string): Promise<ApiResponse<any>> {
+    return apiCall(`/agency/validate/${agencyId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ validated_by: validatedBy || 'system' })
     });
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
   }
 
-  async finalizeAssessment(agencyId: string, finalizedBy: string, finalizationNotes?: string): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/finalize/${agencyId}`, {
+  finalizeAssessment(agencyId: string, finalizedBy: string, finalizationNotes?: string): Promise<ApiResponse<any>> {
+    return apiCall(`/agency/finalize/${agencyId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ finalized_by: finalizedBy, finalization_notes: finalizationNotes || '' })
     });
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
   }
 
-  async unlockAssessment(agencyId: string, unlockedBy: string, reason?: string): Promise<ApiResponse<any>> {
-    const response = await fetch(`${API_BASE}/agency/unlock/${agencyId}`, {
+  unlockAssessment(agencyId: string, unlockedBy: string, reason?: string): Promise<ApiResponse<any>> {
+    return apiCall(`/agency/unlock/${agencyId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ unlocked_by: unlockedBy, reason: reason || 'Officer requested unlock' })
     });
-    const result = await response.json();
-    if (result.success && result.data) result.data = toCamelCase(result.data);
-    return result;
   }
 }
 
+// ---------------------------
+// Export singleton
+// ---------------------------
 export const configService = new ConfigService();

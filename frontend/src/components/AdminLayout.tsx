@@ -22,11 +22,10 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   
-  // ✅ Add state for password modal
   const [showPasswordModal, setShowPasswordModal] = useState(false);
 
-  // ✅ FIXED: Allow both 'system_admin' and 'admin' roles
-  if (user?.role !== 'system_admin' && user?.role !== 'admin') {
+  // Allow both 'system_admin', 'admin', and 'viewer' roles
+  if (user?.role !== 'system_admin' && user?.role !== 'admin' && user?.role !== 'viewer') {
     navigate('/unauthorized');
     return null;
   }
@@ -41,38 +40,58 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     { name: 'Assignments', href: '/admin/assignments', icon: ClipboardDocumentCheckIcon },
   ];
 
+  // Filter nav items for viewer role - hide Configuration and Assignments
+  const visibleNavItems = user?.role === 'viewer' 
+    ? navItems.filter(item => item.name !== 'Configuration' && item.name !== 'Assignments')
+    : navItems;
+
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
-      <div className="w-64 bg-white shadow-md">
+      <div className="w-64 bg-white shadow-md flex flex-col">
         <div className="p-4 border-b">
-  <div className="flex items-center">
-    {/* Logo */}
-    <img 
-      src={accLogo} 
-      alt="ACC Logo" 
-      className="h-10 w-auto mr-3"
-    />
-
-    {/* Text */}
-    <div className="flex flex-col">
-      <span className="text-blue-800 font-bold text-lg leading-tight">
-        AIMS
-      </span>
-      <span className="text-xs text-gray-600 leading-tight">
-        Agency Integrity Maturity System
-      </span>
-    </div>
-  </div>
-
-  {/* User name below */}
-  <p className="text-sm text-gray-500 mt-2">
-    {user?.name}
-  </p>
-</div>
+          <div className="flex items-center">
+            {/* Logo */}
+            <img 
+              src={accLogo} 
+              alt="ACC Logo" 
+              className="h-10 w-auto mr-3"
+            />
+            {/* Text */}
+            <div className="flex flex-col">
+              <span className="text-blue-800 font-bold text-lg leading-tight">
+                AIMS
+              </span>
+              <span className="text-xs text-gray-600 leading-tight">
+                Agency Integrity Maturity System
+              </span>
+            </div>
+          </div>
+          
+          {/* User name and View Only badge */}
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-sm text-gray-500">{user?.name}</p>
+            {user?.role === 'viewer' && (
+              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-200 text-gray-700">
+                View Only
+              </span>
+            )}
+          </div>
+          
+          {/* View Only Mode warning banner */}
+          {user?.role === 'viewer' && (
+            <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-md">
+              <p className="text-xs text-amber-700 flex items-center">
+                <span className="mr-1">🔒</span> 
+                You are in <strong className="mx-1">Read-Only mode</strong>. 
+                You can view data but cannot make changes.
+              </p>
+            </div>
+          )}
+        </div>
         
-        <nav className="mt-4">
-          {navItems.map((item) => {
+        <nav className="flex-1 mt-4">
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             return (
               <Link
@@ -86,7 +105,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             );
           })}
           
-          {/* ✅ Add Change Password option */}
+          {/* Change Password option - visible to all roles */}
           <button
             onClick={() => setShowPasswordModal(true)}
             className="flex items-center px-4 py-3 text-gray-700 hover:bg-gray-100 w-full text-left"
@@ -94,17 +113,18 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
             <Cog6ToothIcon className="h-5 w-5 mr-3" />
             Change Password
           </button>
-          
-          <div className="absolute bottom-0 w-64 border-t p-4">
-            <button
-              onClick={logout}
-              className="flex items-center w-full text-gray-700 hover:bg-gray-100 px-4 py-3"
-            >
-              <ArrowRightOnRectangleIcon className="h-5 w-5 mr-3" />
-              Logout
-            </button>
-          </div>
         </nav>
+        
+        {/* Logout button at bottom */}
+        <div className="border-t p-4">
+          <button
+            onClick={logout}
+            className="flex items-center w-full text-gray-700 hover:bg-gray-100 px-4 py-3 rounded-md"
+          >
+            <ArrowRightOnRectangleIcon className="h-5 w-5 mr-3" />
+            Logout
+          </button>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -112,7 +132,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         {children}
       </div>
       
-      {/* ✅ Add ChangePasswordModal */}
+      {/* Change Password Modal */}
       <ChangePasswordModal 
         isOpen={showPasswordModal} 
         onClose={() => setShowPasswordModal(false)} 

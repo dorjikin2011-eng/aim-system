@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import axios from 'axios';
 import { useAuth } from './AuthContext';
+import { API_BASE } from '../config';
 
 interface AdminStats {
   agencies: number;
@@ -63,7 +64,7 @@ export function AdminStatsProvider({ children }: { children: ReactNode }) {
   
   try {
     setLoading(true);
-    const res = await axios.get('${API_BASE}/api/admin/stats', {
+    const res = await axios.get(`${API_BASE}/api/admin/stats`, {
   withCredentials: true
 });
 

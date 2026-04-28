@@ -21,7 +21,7 @@ export default function ValidationInbox({ requests }: Props) {
       <ul className="mt-2 space-y-1">
         {requests.map(req => (
           <li key={req.id} className="text-sm text-blue-700">
-            • <strong>{req.agencyName}</strong> – {req.message}
+            • <strong>{req.agencyName}</strong> - {req.message}
           </li>
         ))}
       </ul>

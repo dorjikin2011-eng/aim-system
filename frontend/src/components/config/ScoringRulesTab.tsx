@@ -38,7 +38,7 @@ export const ScoringRulesTab: React.FC = () => {
     const mockRules: ScoringRule[] = [
       {
         id: '1',
-        indicatorId: 'ind_1770114038668_i6jrig8sz',
+        indicatorId: 'ind_iccs_v3',
         indicatorName: 'Internal Corruption Control Systems (ICCS)',
         weight: 32,
         scoringType: 'maturity-level',
@@ -54,7 +54,7 @@ export const ScoringRulesTab: React.FC = () => {
       },
       {
         id: '2',
-        indicatorId: 'ind_1770114038672_noe0zgtjx',
+        indicatorId: 'ind_training_v3',
         indicatorName: 'Integrity Capacity Building',
         weight: 24,
         scoringType: 'percentage-range',
@@ -69,7 +69,7 @@ export const ScoringRulesTab: React.FC = () => {
       },
       {
         id: '3',
-        indicatorId: 'ind_1770114038673_zuella44q',
+        indicatorId: 'ind_ad_v3',
         indicatorName: 'Asset Declaration Compliance',
         weight: 14,
         scoringType: 'percentage-range',
@@ -84,7 +84,7 @@ export const ScoringRulesTab: React.FC = () => {
       },
       {
         id: '4',
-        indicatorId: 'ind_coc',
+        indicatorId: 'ind_coc_v3',
         indicatorName: 'Code of Conduct',
         weight: 10,
         scoringType: 'maturity-level',
@@ -99,7 +99,7 @@ export const ScoringRulesTab: React.FC = () => {
       },
       {
         id: '5',
-        indicatorId: 'ind_1770114038674_x4z2r2vjh',
+        indicatorId: 'ind_cases_v3',
         indicatorName: 'Corruption Cases',
         weight: 20,
         scoringType: 'severity-index',

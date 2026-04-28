@@ -54,9 +54,10 @@ export const forgotPassword = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Check if user exists
+    // FIXED: Changed ? to $1
     const user = await getAsync<any>(
       db, 
-      'SELECT id, email, name FROM users WHERE email = ?',
+      'SELECT id, email, name FROM users WHERE email = $1',
       [email]
     );
 
@@ -78,20 +79,27 @@ export const forgotPassword = async (req: Request, res: Response) => {
 
     // Save token to database
     try {
+      // FIXED: Changed ? to $1, $2, $3
       await runAsync(db, 
         `UPDATE users 
-         SET password_reset_token = ?, password_reset_expires = ? 
-         WHERE id = ?`,
+         SET password_reset_token = $1, password_reset_expires = $2 
+         WHERE id = $3`,
         [resetToken, resetExpires.toISOString(), user.id]
       );
       console.log('Token saved to database for user:', user.id);
     } catch (dbError) {
       console.error('Failed to save token to database:', dbError);
       
-      // Check if columns exist (for debugging)
+      // Check if columns exist (for debugging) - PostgreSQL version
       try {
-        const columns = await allAsync<any[]>(db, "PRAGMA table_info(users)", []);
-        const columnNames = columns.map(col => col.name);
+        const columns = await allAsync<any>(
+          db, 
+          `SELECT column_name 
+           FROM information_schema.columns 
+           WHERE table_name = 'users'`,
+          []
+        );
+        const columnNames = columns.map(col => col.column_name);
         console.log('Available columns:', columnNames);
         
         if (!columnNames.includes('password_reset_token')) {
@@ -177,12 +185,13 @@ export const validateResetToken = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Check if token is valid and not expired
+    // FIXED: Changed ? to $1, $2
     const user = await getAsync<any>(
       db, 
       `SELECT id, email, name, password_reset_expires 
        FROM users 
-       WHERE password_reset_token = ? 
-         AND password_reset_expires > ?`,
+       WHERE password_reset_token = $1 
+         AND password_reset_expires > $2`,
       [token, new Date().toISOString()]
     );
 
@@ -241,12 +250,13 @@ export const resetPassword = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Check if token is valid and not expired
+    // FIXED: Changed ? to $1, $2
     const user = await getAsync<any>(
       db, 
       `SELECT id, email, name 
        FROM users 
-       WHERE password_reset_token = ? 
-         AND password_reset_expires > ?`,
+       WHERE password_reset_token = $1 
+         AND password_reset_expires > $2`,
       [token, new Date().toISOString()]
     );
 
@@ -261,13 +271,14 @@ export const resetPassword = async (req: Request, res: Response) => {
     
     // Update password and clear reset token
     try {
+      // FIXED: Changed ? to $1, $2, $3, $4
       await runAsync(db, 
         `UPDATE users 
-         SET password_hash = ?, 
+         SET password_hash = $1, 
              password_reset_token = NULL, 
              password_reset_expires = NULL,
-             updated_at = ?
-         WHERE id = ?`,
+             updated_at = $2
+         WHERE id = $3`,
         [
           hashedPassword, 
           new Date().toISOString(),

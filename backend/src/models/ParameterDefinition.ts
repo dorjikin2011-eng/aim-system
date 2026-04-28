@@ -1,4 +1,5 @@
-// backend/src/models/ParameterDefinition.ts
+// backend/src/models/ParameterDefinition.ts - POSTGRESQL FIXED VERSION
+
 import { getDB, getAsync, allAsync, runAsync } from './db';
 import { 
   ParameterDefinition as ParameterDefinitionType, 
@@ -19,9 +20,10 @@ export class ParameterDefinition {
    */
   static async getAll(includeInactive = false): Promise<ParameterDefinitionType[]> {
     const db = getDB();
+    // FIXED: Use PostgreSQL boolean true/false
     const query = includeInactive 
       ? 'SELECT * FROM parameter_definitions ORDER BY code'
-      : 'SELECT * FROM parameter_definitions WHERE is_active = 1 ORDER BY code';
+      : 'SELECT * FROM parameter_definitions WHERE is_active = true ORDER BY code';
     
     const rows = await allAsync<any>(db, query);
     return rows.map(row => this.mapRowToParameter(row));
@@ -34,7 +36,7 @@ export class ParameterDefinition {
     const db = getDB();
     const row = await getAsync<any>(
       db,
-      'SELECT * FROM parameter_definitions WHERE code = ?',
+      'SELECT * FROM parameter_definitions WHERE code = $1',
       [code]
     );
     
@@ -49,7 +51,7 @@ export class ParameterDefinition {
     const db = getDB();
     const row = await getAsync<any>(
       db,
-      'SELECT * FROM parameter_definitions WHERE id = ?',
+      'SELECT * FROM parameter_definitions WHERE id = $1',
       [id]
     );
     
@@ -67,10 +69,10 @@ export class ParameterDefinition {
   ): Promise<string | null> {
     const db = getDB();
     
-    // Use provided id or generate one
     const id = param.id || `param_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     try {
+      // FIXED: Use PostgreSQL $ placeholders and boolean values
       await runAsync(
         db,
         `INSERT INTO parameter_definitions (
@@ -78,7 +80,7 @@ export class ParameterDefinition {
           ui_component, options, default_value, is_active, created_by, updated_by,
           calculation_config, scoring_rule_ids, dependencies,
           display_order, metadata, required, weight
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
         [
           id,
           param.code,
@@ -89,7 +91,7 @@ export class ParameterDefinition {
           param.uiSettings?.component || null,
           JSON.stringify(param.options || []),
           param.defaultValue !== undefined ? JSON.stringify(param.defaultValue) : null,
-          param.isActive ? 1 : 0,
+          param.isActive === true, // PostgreSQL boolean
           param.createdBy,
           param.createdBy,
           param.calculationConfig ? JSON.stringify(param.calculationConfig) : null,
@@ -97,7 +99,7 @@ export class ParameterDefinition {
           JSON.stringify(param.dependencies || []),
           param.displayOrder || 0,
           JSON.stringify(param.metadata || {}),
-          param.required ? 1 : 0,
+          param.required === true, // PostgreSQL boolean
           param.weight || null
         ]
       );
@@ -121,70 +123,70 @@ export class ParameterDefinition {
     
     const fields: string[] = [];
     const values: any[] = [];
+    let paramIndex = 1;
     
-    // Build dynamic update query
     if (updates.code !== undefined) {
-      fields.push('code = ?');
+      fields.push(`code = $${paramIndex++}`);
       values.push(updates.code);
     }
     if (updates.label !== undefined) {
-      fields.push('name = ?');
+      fields.push(`name = $${paramIndex++}`);
       values.push(updates.label);
     }
     if (updates.description !== undefined) {
-      fields.push('description = ?');
+      fields.push(`description = $${paramIndex++}`);
       values.push(updates.description);
     }
     if (updates.type !== undefined) {
-      fields.push('data_type = ?');
+      fields.push(`data_type = $${paramIndex++}`);
       values.push(updates.type);
     }
     if (updates.validation !== undefined) {
-      fields.push('validation_rules = ?');
+      fields.push(`validation_rules = $${paramIndex++}`);
       values.push(JSON.stringify(updates.validation));
     }
     if (updates.uiSettings !== undefined) {
-      fields.push('ui_component = ?');
+      fields.push(`ui_component = $${paramIndex++}`);
       values.push(updates.uiSettings.component || null);
     }
     if (updates.options !== undefined) {
-      fields.push('options = ?');
+      fields.push(`options = $${paramIndex++}`);
       values.push(JSON.stringify(updates.options));
     }
     if (updates.defaultValue !== undefined) {
-      fields.push('default_value = ?');
+      fields.push(`default_value = $${paramIndex++}`);
       values.push(JSON.stringify(updates.defaultValue));
     }
     if (updates.isActive !== undefined) {
-      fields.push('is_active = ?');
-      values.push(updates.isActive ? 1 : 0);
+      fields.push(`is_active = $${paramIndex++}`);
+      values.push(updates.isActive === true); // PostgreSQL boolean
     }
     if (updates.calculationConfig !== undefined) {
-      fields.push('calculation_config = ?');
+      fields.push(`calculation_config = $${paramIndex++}`);
       values.push(JSON.stringify(updates.calculationConfig));
     }
     if (updates.scoringRuleIds !== undefined) {
-      fields.push('scoring_rule_ids = ?');
+      fields.push(`scoring_rule_ids = $${paramIndex++}`);
       values.push(JSON.stringify(updates.scoringRuleIds));
     }
     if (updates.dependencies !== undefined) {
-      fields.push('dependencies = ?');
+      fields.push(`dependencies = $${paramIndex++}`);
       values.push(JSON.stringify(updates.dependencies));
     }
     if (updates.displayOrder !== undefined) {
-      fields.push('display_order = ?');
+      fields.push(`display_order = $${paramIndex++}`);
       values.push(updates.displayOrder);
     }
     if (updates.metadata !== undefined) {
-      fields.push('metadata = ?');
+      fields.push(`metadata = $${paramIndex++}`);
       values.push(JSON.stringify(updates.metadata));
     }
     if (updates.required !== undefined) {
-      fields.push('required = ?');
-      values.push(updates.required ? 1 : 0);
+      fields.push(`required = $${paramIndex++}`);
+      values.push(updates.required === true); // PostgreSQL boolean
     }
     if (updates.weight !== undefined) {
-      fields.push('weight = ?');
+      fields.push(`weight = $${paramIndex++}`);
       values.push(updates.weight);
     }
     
@@ -192,15 +194,15 @@ export class ParameterDefinition {
       return false;
     }
     
-    fields.push('updated_by = ?');
-    fields.push('updated_at = CURRENT_TIMESTAMP');
+    fields.push(`updated_by = $${paramIndex++}`);
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
     values.push(updatedBy);
     values.push(id);
     
     try {
       await runAsync(
         db,
-        `UPDATE parameter_definitions SET ${fields.join(', ')} WHERE id = ?`,
+        `UPDATE parameter_definitions SET ${fields.join(', ')} WHERE id = $${paramIndex++}`,
         values
       );
       return true;
@@ -217,9 +219,10 @@ export class ParameterDefinition {
     const db = getDB();
     
     try {
+      // FIXED: Use PostgreSQL $ placeholder and boolean false
       await runAsync(
         db,
-        'UPDATE parameter_definitions SET is_active = 0, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        'UPDATE parameter_definitions SET is_active = false, updated_by = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
         [deletedBy, id]
       );
       return true;
@@ -234,9 +237,10 @@ export class ParameterDefinition {
    */
   static async getByCalculationType(calculationType: CalculationType): Promise<ParameterDefinitionType[]> {
     const db = getDB();
+    // FIXED: Use PostgreSQL boolean true
     const rows = await allAsync<any>(
       db,
-      'SELECT * FROM parameter_definitions WHERE calculation_config LIKE ? AND is_active = 1 ORDER BY display_order, code',
+      'SELECT * FROM parameter_definitions WHERE calculation_config LIKE $1 AND is_active = true ORDER BY display_order, code',
       [`%"calculationType":"${calculationType}"%`]
     );
     
@@ -248,16 +252,22 @@ export class ParameterDefinition {
    */
   static async getAutoScoringParameters(): Promise<ParameterDefinitionType[]> {
     const db = getDB();
+    // FIXED: Use PostgreSQL boolean true
     const rows = await allAsync<any>(
       db,
       `SELECT * FROM parameter_definitions 
-       WHERE (calculation_config LIKE '%"calculationType":"auto"%' 
-              OR calculation_config LIKE '%"calculationType":"mixed"%'
-              OR calculation_config LIKE '%"calculationType":"percentage"%'
-              OR calculation_config LIKE '%"calculationType":"weighted_sum"%')
-       AND is_active = 1 
+       WHERE (calculation_config LIKE $1 
+              OR calculation_config LIKE $2
+              OR calculation_config LIKE $3
+              OR calculation_config LIKE $4)
+       AND is_active = true 
        ORDER BY display_order, code`,
-      []
+      [
+        '%"calculationType":"auto"%',
+        '%"calculationType":"mixed"%',
+        '%"calculationType":"percentage"%',
+        '%"calculationType":"weighted_sum"%'
+      ]
     );
     
     return rows.map(row => this.mapRowToParameter(row));
@@ -268,12 +278,13 @@ export class ParameterDefinition {
    */
   static async getDependencies(parameterCode: string): Promise<ParameterDefinitionType[]> {
     const db = getDB();
+    // FIXED: Use PostgreSQL JSON contains operator
     const rows = await allAsync<any>(
       db,
       `SELECT pd.* FROM parameter_definitions pd 
-       WHERE pd.is_active = 1 
-       AND JSON_CONTAINS(pd.dependencies, ?)`,
-      [JSON.stringify(parameterCode)]
+       WHERE pd.is_active = true 
+       AND pd.dependencies @> $1`,
+      [JSON.stringify([parameterCode])]
     );
     
     return rows.map(row => this.mapRowToParameter(row));
@@ -312,7 +323,6 @@ export class ParameterDefinition {
             rawData[config.numeratorField] = numerator;
             rawData[config.denominatorField] = denominator;
             
-            // Validation
             if (denominator === 0) {
               errors.push(`Denominator (${config.denominatorLabel}) cannot be zero`);
               return { calculatedValue: 0, rawData, errors, warnings };
@@ -395,16 +405,13 @@ export class ParameterDefinition {
               rawData[varDef.field] = value;
             });
 
-            // Replace variables in formula
             let formula = config.formula;
             Object.entries(variables).forEach(([varName, value]) => {
               formula = formula.replace(new RegExp(`\\{${varName}\\}`, 'g'), value.toString());
             });
 
-            // Safe evaluation
             const calculatedValue = Function(`"use strict"; return (${formula})`)();
             
-            // Apply validation if defined
             if (config.validation) {
               if (config.validation.minResult !== undefined && calculatedValue < config.validation.minResult) {
                 warnings.push(`Formula result (${calculatedValue}) is below minimum (${config.validation.minResult})`);
@@ -447,7 +454,6 @@ export class ParameterDefinition {
       console.error('Calculation error:', error);
     }
 
-    // Fallback to manual value if calculation fails
     return { 
       calculatedValue: formValues[param.code], 
       rawData: {},
@@ -467,13 +473,11 @@ export class ParameterDefinition {
     const errors: string[] = [];
     const warnings: string[] = [];
     
-    // Required check
     if (param.required && (value === undefined || value === null || value === '')) {
       errors.push(`${param.label} is required`);
       return { isValid: false, errors, warnings };
     }
     
-    // Type-specific validation
     if (value !== undefined && value !== null && value !== '') {
       switch (param.type) {
         case 'number':
@@ -529,7 +533,6 @@ export class ParameterDefinition {
       }
     }
 
-    // Calculation-specific validation
     if (formValues && param.calculationConfig?.calculationType === 'percentage') {
       const config = param.calculationConfig.calculationDetails?.percentageConfig as PercentageConfig;
       if (config) {
@@ -563,22 +566,23 @@ export class ParameterDefinition {
   }> {
     const db = getDB();
     
-    const totalResult = await getAsync<{ count: number }>(
+    const totalResult = await getAsync<{ count: string }>(
       db,
       'SELECT COUNT(*) as count FROM parameter_definitions'
     );
     
-    const activeResult = await getAsync<{ count: number }>(
+    // FIXED: Use PostgreSQL boolean true
+    const activeResult = await getAsync<{ count: string }>(
       db,
-      'SELECT COUNT(*) as count FROM parameter_definitions WHERE is_active = 1'
+      'SELECT COUNT(*) as count FROM parameter_definitions WHERE is_active = true'
     );
     
-    const typeResult = await allAsync<{ data_type: string; count: number }>(
+    // FIXED: Use PostgreSQL boolean true
+    const typeResult = await allAsync<{ data_type: string; count: string }>(
       db,
-      'SELECT data_type, COUNT(*) as count FROM parameter_definitions WHERE is_active = 1 GROUP BY data_type'
+      'SELECT data_type, COUNT(*) as count FROM parameter_definitions WHERE is_active = true GROUP BY data_type'
     );
     
-    // Count by calculation type
     const calcTypeResult = await allAsync<any>(
       db,
       `SELECT 
@@ -595,36 +599,37 @@ export class ParameterDefinition {
         END as calculation_type,
         COUNT(*) as count 
        FROM parameter_definitions 
-       WHERE is_active = 1 
+       WHERE is_active = true 
        GROUP BY calculation_type`
     );
     
     const byType: Record<string, number> = {};
-
-// Ensure typeResult is an array
-const types = Array.isArray(typeResult) ? typeResult : (typeResult ? [typeResult] : []);
-types.forEach(row => {
-  if (row && row.data_type) {
-    byType[row.data_type] = row.count || 0;
-  }
-});
+    const types = Array.isArray(typeResult) ? typeResult : [];
+    types.forEach(row => {
+      if (row && row.data_type) {
+        byType[row.data_type] = parseInt(row.count || '0', 10);
+      }
+    });
     
     const byCalculationType: Record<string, number> = {};
     calcTypeResult.forEach(row => {
-      byCalculationType[row.calculation_type] = row.count;
+      byCalculationType[row.calculation_type] = parseInt(row.count || '0', 10);
     });
     
+    const total = parseInt(totalResult?.count || '0', 10);
+    const active = parseInt(activeResult?.count || '0', 10);
+    
     return {
-      total: totalResult?.count || 0,
+      total,
       byType,
       byCalculationType,
-      active: activeResult?.count || 0,
-      inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
+      active,
+      inactive: total - active
     };
   }
 
   /**
-   * Map database row to ParameterDefinition
+   * Map database row to ParameterDefinition - FIXED: PostgreSQL boolean
    */
   private static mapRowToParameter(row: any): ParameterDefinitionType {
     let calculationConfig: CalculationConfig | undefined;
@@ -655,7 +660,7 @@ types.forEach(row => {
       label: row.name,
       description: row.description,
       type: (row.data_type as any) || 'text',
-      required: row.required === 1,
+      required: row.required === true, // PostgreSQL boolean
       defaultValue: row.default_value ? JSON.parse(row.default_value) : undefined,
       options: row.options ? JSON.parse(row.options) : [],
       validation: row.validation_rules ? JSON.parse(row.validation_rules) : {},
@@ -667,7 +672,7 @@ types.forEach(row => {
       scoringRuleIds: row.scoring_rule_ids ? JSON.parse(row.scoring_rule_ids) : [],
       dependencies: row.dependencies ? JSON.parse(row.dependencies) : [],
       displayOrder: row.display_order || 0,
-      isActive: row.is_active === 1,
+      isActive: row.is_active === true, // PostgreSQL boolean
       weight: row.weight || undefined,
       metadata: row.metadata ? JSON.parse(row.metadata) : {}
     };

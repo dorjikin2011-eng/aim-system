@@ -280,7 +280,7 @@ export class MaturityFrameworkModel {
       weight: row.weight,
       maturityFramework: JSON.parse(row.maturity_framework),
       displayOrder: row.display_order,
-      isActive: row.is_active === 1
+      isActive: row.is_active === true
     };
   }
 

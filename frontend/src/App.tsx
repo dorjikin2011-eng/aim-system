@@ -44,6 +44,7 @@ function RootRedirect() {
         switch (user.role) {
           case 'system_admin':
           case 'admin':
+          case 'viewer':
             navigate('/admin', { replace: true });
             break;
           case 'prevention_officer':
@@ -94,7 +95,7 @@ function RootRedirect() {
    ========================= */
 const AdminRouteWrapper = ({ children }: { children: React.ReactNode }) => {
   return (
-    <RequireAuth allowedRoles={['system_admin', 'admin']}>
+    <RequireAuth allowedRoles={['system_admin', 'admin', 'viewer']}>
       <AdminStatsProvider>
         {children}
       </AdminStatsProvider>

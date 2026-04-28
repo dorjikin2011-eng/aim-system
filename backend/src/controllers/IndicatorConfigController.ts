@@ -1,19 +1,32 @@
+// backend/src/controllers/IndicatorConfigController.ts
 
-//backend/src/controllers/IndicatorConfigController.ts - FIXED
 import { Request, Response } from 'express';
 import { IndicatorConfig } from '../models/IndicatorConfig';
-//import { ConfigValidator } from '../utils/ConfigValidator';
 import { IndicatorCategory } from '../types/config';
 
 export class IndicatorConfigController {
+  
+  /**
+   * Helper function to safely convert any value to boolean
+   * Handles PostgreSQL boolean, integer (0/1), and string representations
+   */
+  private static toBoolean(value: any): boolean {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    if (typeof value === 'string') {
+      const lower = value.toLowerCase();
+      return lower === 'true' || lower === '1' || lower === 't';
+    }
+    return false;
+  }
   
   static async getAllIndicators(req: Request, res: Response): Promise<void> {
     try {
       const { 
         category, 
-        active_only = 'true',  // FIXED: snake_case to match frontend
-        include_parameters = 'false',  // FIXED: snake_case to match frontend
-        include_rules = 'false'  // FIXED: snake_case to match frontend
+        active_only = 'true',
+        include_parameters = 'false',
+        include_rules = 'false'
       } = req.query;
       
       let indicators;
@@ -27,26 +40,24 @@ export class IndicatorConfigController {
         indicators = await IndicatorConfig.getAll(active_only === 'false');
       }
       
-      // DEBUG: Check what we received
-      console.log('CONTROLLER DEBUG: include_parameters =', include_parameters);
-      console.log('CONTROLLER DEBUG: First indicator has parameters?', indicators[0]?.parameters?.length || 0);
+      // Ensure isActive is boolean using type-safe conversion
+      indicators = indicators.map(ind => ({
+        ...ind,
+        isActive: this.toBoolean(ind.isActive)
+      }));
       
       // If not requesting parameters/rules, strip them to reduce payload
-      // FIXED: Use snake_case variable names
       if (include_parameters !== 'true') {
-        console.log('CONTROLLER: Stripping parameters because include_parameters =', include_parameters);
         indicators = indicators.map(ind => ({
           ...ind,
-          parameters: undefined
+          parameters: []
         }));
-      } else {
-        console.log('CONTROLLER: Keeping parameters because include_parameters =', include_parameters);
       }
       
       if (include_rules !== 'true') {
         indicators = indicators.map(ind => ({
           ...ind,
-          scoring_rules: undefined
+          scoringRules: []
         }));
       }
       
@@ -76,9 +87,15 @@ export class IndicatorConfigController {
         return;
       }
       
+      // Ensure isActive is boolean using type-safe conversion
+      const fixedIndicator = {
+        ...indicator,
+        isActive: this.toBoolean(indicator.isActive)
+      };
+      
       res.json({
         success: true,
-        data: indicator,
+        data: fixedIndicator,
       });
     } catch (error: any) {
       console.error('Error fetching indicator:', error);
@@ -92,7 +109,7 @@ export class IndicatorConfigController {
   static async createIndicator(req: Request, res: Response): Promise<void> {
     try {
       const indicatorData = req.body;
-      const userId = (req as any).user?.id || 'system'; // Assuming you have user info in request
+      const userId = (req as any).user?.id || 'system';
       
       // Validate indicator
       const validation = await IndicatorConfig.validateIndicator(indicatorData);
@@ -116,7 +133,7 @@ export class IndicatorConfigController {
       
       res.status(201).json({
         success: true,
-        data: indicator,
+        data: indicator ? { ...indicator, isActive: this.toBoolean(indicator.isActive) } : null,
         message: 'Indicator created successfully',
       });
     } catch (error: any) {
@@ -176,7 +193,7 @@ export class IndicatorConfigController {
       
       res.json({
         success: true,
-        data: indicator,
+        data: indicator ? { ...indicator, isActive: this.toBoolean(indicator.isActive) } : null,
         message: 'Indicator updated successfully',
       });
     } catch (error: any) {
@@ -304,41 +321,54 @@ export class IndicatorConfigController {
     }
   }
 
-  static async restoreIndicatorVersion(req: Request, res: Response): Promise<void> {
-    try {
-      const { id, version } = req.params;
-      const userId = (req as any).user?.id || 'system';
-      
-      const success = await IndicatorConfig.restoreVersion(
-        id,
-        parseInt(version),
-        userId
-      );
-      
-      if (!success) {
-        throw new Error('Failed to restore version');
-      }
-      
-      res.json({
-        success: true,
-        message: `Indicator restored to version ${version}`,
+ static async restoreIndicatorVersion(req: Request, res: Response): Promise<void> {
+  try {
+    const { id, version } = req.params;
+    const userId = (req as any).user?.id || 'system';
+    
+    // Check if indicator exists
+    const indicator = await IndicatorConfig.getById(id);
+    if (!indicator) {
+      res.status(404).json({
+        success: false,
+        error: 'Indicator not found',
       });
-    } catch (error: any) {
-      console.error('Error restoring version:', error);
-      
-      if (error.message.includes('not found')) {
-        res.status(404).json({
-          success: false,
-          error: error.message,
-        });
-      } else {
-        res.status(500).json({
-          success: false,
-          error: error.message || 'Failed to restore version',
-        });
-      }
+      return;
+    }
+    
+    const success = await IndicatorConfig.restoreVersion(
+      id,
+      parseInt(version),
+      userId
+    );
+    
+    if (!success) {
+      throw new Error('Failed to restore version');
+    }
+    
+    const restoredIndicator = await IndicatorConfig.getById(id);
+    
+    res.json({
+      success: true,
+      data: restoredIndicator,
+      message: `Indicator restored to version ${version} successfully`,
+    });
+  } catch (error: any) {
+    console.error('Error restoring version:', error);
+    
+    if (error.message.includes('not found')) {
+      res.status(404).json({
+        success: false,
+        error: error.message,
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to restore version',
+      });
     }
   }
+}
 
   static async validateIndicatorConfig(req: Request, res: Response): Promise<void> {
     try {
@@ -363,9 +393,15 @@ export class IndicatorConfigController {
     try {
       const indicators = await IndicatorConfig.getCompleteConfiguration();
       
+      // Ensure isActive is boolean for all indicators using type-safe conversion
+      const fixedIndicators = indicators.map(ind => ({
+        ...ind,
+        isActive: this.toBoolean(ind.isActive)
+      }));
+      
       res.json({
         success: true,
-        data: indicators,
+        data: fixedIndicators,
       });
     } catch (error: any) {
       console.error('Error getting complete configuration:', error);
@@ -409,7 +445,7 @@ export class IndicatorConfigController {
             results.push({
               id: indicatorUpdate.id,
               success: true,
-              data: updatedIndicator,
+              data: updatedIndicator ? { ...updatedIndicator, isActive: this.toBoolean(updatedIndicator.isActive) } : null,
             });
           } else {
             errors.push({

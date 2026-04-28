@@ -8,9 +8,10 @@ import {
   getUnassignedAgencies,
   createAssignment,
   deleteAssignment,
-  getAssignmentStats
+  getAssignmentStats,
+  getAssignmentsByFiscalYear
 } from '../controllers/assignmentController';
-import { requireRole } from '../middleware/auth';
+import { requireRole, requireWriteAccess } from '../middleware/auth';
 
 const router = Router();
 
@@ -20,8 +21,10 @@ router.get('/stats', requireRole(['system_admin', 'admin']), getAssignmentStats)
 router.get('/available-officers', requireRole(['system_admin', 'admin']), getAvailableOfficers);
 router.get('/unassigned-agencies', requireRole(['system_admin', 'admin']), getUnassignedAgencies);
 router.get('/officers/:officerId', requireRole(['system_admin', 'admin']), getOfficerAssignments);
-router.post('/', requireRole(['system_admin', 'admin']), createAssignment);
-router.delete('/:id', requireRole(['system_admin', 'admin']), deleteAssignment);
+router.get('/by-fy/:fiscalYear', requireRole(['system_admin', 'admin']), getAssignmentsByFiscalYear);
+router.post('/', requireRole(['system_admin', 'admin']), requireWriteAccess, createAssignment);
+router.delete('/:id', requireRole(['system_admin', 'admin']), requireWriteAccess, deleteAssignment);
+
 // Agency report
 router.get('/report/:agencyId', requireRole(['prevention_officer']), getAgencyReport);
 

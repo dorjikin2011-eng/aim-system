@@ -1,4 +1,4 @@
-// frontend/src/pages/prevention/PreventionDashboard.tsx - COMPLETE FIXED VERSION
+// frontend/src/pages/prevention/PreventionDashboard.tsx - UPDATED WITH FY SELECTOR AND EMPTY STATE
 import { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -16,7 +16,8 @@ import {
   DocumentTextIcon, 
   ChartBarIcon,
   ExclamationTriangleIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  CalendarIcon
 } from '@heroicons/react/24/outline';
 
 // Define AgencyItem type matching AgenciesTable.tsx
@@ -37,13 +38,31 @@ interface AgencyItem {
 export default function PreventionDashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [selectedFY, setSelectedFY] = useState('2024–25');
+  
+  // Fiscal Year State - Default to current FY
+  const [selectedFY, setSelectedFY] = useState<string>(() => {
+    const currentYear = new Date().getFullYear();
+    return `${currentYear}-${(currentYear + 1).toString().slice(-2)}`;
+  });
+  
   const [activeCard, setActiveCard] = useState<string | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [selectedAgencyForReport, setSelectedAgencyForReport] = useState<string>('');
 
+  // Generate available fiscal years (past 2, current, next 2)
+  const generateFiscalYears = () => {
+    const currentYear = new Date().getFullYear();
+    const years = [];
+    for (let i = -2; i <= 2; i++) {
+      const startYear = currentYear + i;
+      const endYear = startYear + 1;
+      years.push(`${startYear}-${endYear.toString().slice(-2)}`);
+    }
+    return years;
+  };
+
   // Update the usePreventionData hook or cast the result to match our type
-  const { agencies, summary, validationRequests, riskIndicators, loading, error } = usePreventionData(selectedFY);
+  const { agencies, summary, validationRequests, riskIndicators, loading, error, refetch } = usePreventionData(selectedFY);
 
   // Cast agencies to the correct type if needed
   const typedAgencies: AgencyItem[] = agencies as AgencyItem[] || [];
@@ -55,7 +74,7 @@ export default function PreventionDashboard() {
   // Handle navigation to agency assessment
   const handleViewAgency = (agencyId: string) => {
     console.log('🔵 Navigating to agency assessment:', agencyId);
-    navigate(`/prevention/agencies/${agencyId}/assessment`);
+    navigate(`/prevention/agencies/${agencyId}/assessment?fiscal_year=${selectedFY}`);
   };
 
   // Handle generate agency report
@@ -67,7 +86,7 @@ export default function PreventionDashboard() {
     setSelectedAgencyForReport(agencyId);
     
     try {
-      const response = await fetch(`${API_BASE}/api/assessments/report/${agencyId}`, {
+      const response = await fetch(`${API_BASE}/api/assessments/report/${agencyId}?fiscal_year=${selectedFY}`, {
         method: 'GET',
         credentials: 'include',
         headers: {
@@ -113,7 +132,7 @@ export default function PreventionDashboard() {
 
   // Handle generate overall report
   const handleGenerateOverallReport = async () => {
-    console.log('📊 Generating overall report');
+    console.log('📊 Generating overall report for FY:', selectedFY);
     setIsGeneratingReport(true);
     
     try {
@@ -171,13 +190,14 @@ export default function PreventionDashboard() {
         },
         body: JSON.stringify({
           finalized_by: user?.id,
-          finalization_notes: 'Assessment finalized by prevention officer'
+          finalization_notes: 'Assessment finalized by prevention officer',
+          fiscal_year: selectedFY
         })
       })
       .then(async response => {
         if (response.ok) {
           alert('Assessment finalized successfully!');
-          window.location.reload();
+          refetch();
         } else {
           const data = await response.json();
           alert(`Failed to finalize assessment: ${data.error || 'Unknown error'}`);
@@ -204,13 +224,14 @@ export default function PreventionDashboard() {
         },
         body: JSON.stringify({
           unlocked_by: user?.id,
-          reason: reason
+          reason: reason,
+          fiscal_year: selectedFY
         })
       })
       .then(async response => {
         if (response.ok) {
           alert('Assessment unlocked successfully!');
-          window.location.reload();
+          refetch();
         } else {
           const data = await response.json();
           alert(`Failed to unlock assessment: ${data.error || 'Unknown error'}`);
@@ -225,6 +246,7 @@ export default function PreventionDashboard() {
 
   // Helper function to generate agency report HTML
   const generateReportHTML = (data: any) => {
+    // ... (keep existing generateReportHTML function)
     const getIntegrityColor = (level: string) => {
       if (level.includes('High')) return '#16a34a';
       if (level.includes('Medium')) return '#ca8a04';
@@ -388,12 +410,6 @@ export default function PreventionDashboard() {
             border-bottom: 1px solid #e2e8f0;
             color: #334155;
           }
-          .indicators-table tr:last-child td {
-            border-bottom: none;
-          }
-          .indicators-table tr:hover {
-            background: #f8fafc;
-          }
           .score-badge {
             display: inline-block;
             padding: 4px 12px;
@@ -427,17 +443,13 @@ export default function PreventionDashboard() {
             display: flex;
             align-items: center;
             gap: 10px;
-            transition: all 0.2s;
           }
           .print-button:hover {
             background: #1d4ed8;
-            transform: translateY(-2px);
-            box-shadow: 0 15px 30px rgba(37,99,235,0.4);
           }
           @media print {
             body { background: white; padding: 0; }
             .print-button { display: none; }
-            .report-container { box-shadow: none; }
           }
         </style>
       </head>
@@ -445,7 +457,7 @@ export default function PreventionDashboard() {
         <div class="report-container">
           <div class="report-header">
             <h1>AIMS Assessment Report</h1>
-            <div class="subtitle">Anti-Corruption Commission • Fiscal Year ${data.assessment.fiscal_year}</div>
+            <div class="subtitle">Fiscal Year ${data.assessment.fiscal_year}</div>
             <div class="agency-badge">${data.agency.name} • ${data.agency.sector}</div>
           </div>
           
@@ -498,10 +510,15 @@ export default function PreventionDashboard() {
                   const percentValue = parseFloat(percentage);
                   const percentClass = percentValue >= 80 ? 'score-high' : percentValue >= 50 ? 'score-medium' : 'score-low';
                   
+                  // Map category to display name
+                  let categoryDisplay = ind.category;
+                  if (ind.category === 'integrity_promotion') categoryDisplay = 'Integrity Promotion';
+                  else if (ind.category === 'corruption_accountability') categoryDisplay = 'Corruption Accountability';
+                  
                   return `
                     <tr>
                       <td><strong>${ind.indicator_name}</strong></td>
-                      <td>${ind.category}</td>
+                      <td>${categoryDisplay}</td>
                       <td style="font-weight: 600; color: ${getScoreColor(ind.score, ind.max_score)}">${ind.score}</td>
                       <td>${ind.max_score}</td>
                       <td><span class="score-badge ${percentClass}">${percentage}%</span></td>
@@ -529,22 +546,20 @@ export default function PreventionDashboard() {
     `;
   };
 
-    // Helper function for overall report - FIXED to use data parameter
+  // Helper function for overall report
   const generateOverallReportHTML = (data: any) => {
-    // If no data is provided, use default values
     const reportData = data || {};
-    const agencies = reportData.agencies || [];
-    const summary = reportData.summary || {
-      totalAgencies: 0,
-      finalizedCount: 0,
-      inProgressCount: 0,
-      notStartedCount: 0,
-      averageScore: 0,
-      integrityDistribution: {
-        high: 0,
-        medium: 0,
-        low: 0
-      }
+    const agencies = reportData.assessments || reportData.agencies || [];
+    const summary = reportData.summary || {};
+    
+    const totalAgencies = summary.totalAgencies || summary.total_agencies || 0;
+    const finalizedCount = summary.finalizedCount || summary.finalized_count || 0;
+    const averageScore = summary.averageScore || summary.average_score || 0;
+    
+    const integrityDist = {
+      high: summary.highIntegrity || summary.high_integrity || 0,
+      medium: summary.mediumIntegrity || summary.medium_integrity || 0,
+      low: summary.needsImprovement || summary.needs_improvement || 0
     };
 
     return `
@@ -610,17 +625,11 @@ export default function PreventionDashboard() {
             color: #64748b;
             margin-bottom: 10px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
           }
           .summary-card .value {
             font-size: 36px;
             font-weight: 700;
             color: #1e3a8a;
-          }
-          .summary-card .sub-value {
-            font-size: 14px;
-            color: #475569;
-            margin-top: 5px;
           }
           .section-title {
             font-size: 20px;
@@ -629,6 +638,24 @@ export default function PreventionDashboard() {
             margin: 30px 0 20px;
             padding-bottom: 10px;
             border-bottom: 2px solid #e2e8f0;
+          }
+          .integrity-distribution {
+            display: flex;
+            gap: 20px;
+            margin: 20px 0 30px;
+          }
+          .dist-item {
+            flex: 1;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+          }
+          .dist-high { background: #dcfce7; color: #166534; }
+          .dist-medium { background: #fef9c3; color: #854d0e; }
+          .dist-low { background: #fee2e2; color: #991b1b; }
+          .dist-number {
+            font-size: 28px;
+            font-weight: 700;
           }
           .agencies-table {
             width: 100%;
@@ -645,31 +672,12 @@ export default function PreventionDashboard() {
             font-weight: 600;
             font-size: 14px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
             padding: 15px;
             text-align: left;
           }
           .agencies-table td {
             padding: 12px 15px;
             border-bottom: 1px solid #e2e8f0;
-          }
-          .integrity-distribution {
-            display: flex;
-            gap: 20px;
-            margin: 20px 0;
-          }
-          .dist-item {
-            flex: 1;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-          }
-          .dist-high { background: #dcfce7; color: #166534; }
-          .dist-medium { background: #fef9c3; color: #854d0e; }
-          .dist-low { background: #fee2e2; color: #991b1b; }
-          .dist-number {
-            font-size: 28px;
-            font-weight: 700;
           }
           .footer {
             margin-top: 40px;
@@ -690,21 +698,13 @@ export default function PreventionDashboard() {
             border-radius: 50px;
             font-weight: 600;
             cursor: pointer;
-            box-shadow: 0 10px 25px rgba(37,99,235,0.3);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            transition: all 0.2s;
           }
           .print-button:hover {
             background: #1d4ed8;
-            transform: translateY(-2px);
-            box-shadow: 0 15px 30px rgba(37,99,235,0.4);
           }
           @media print {
             body { background: white; padding: 0; }
             .print-button { display: none; }
-            .report-container { box-shadow: none; }
           }
         </style>
       </head>
@@ -720,34 +720,30 @@ export default function PreventionDashboard() {
             <div class="summary-grid">
               <div class="summary-card">
                 <div class="label">Total Agencies</div>
-                <div class="value">${summary.totalAgencies || agencies.length}</div>
+                <div class="value">${totalAgencies}</div>
               </div>
               <div class="summary-card">
                 <div class="label">Finalized</div>
-                <div class="value">${summary.finalizedCount || agencies.filter((a: any) => a.status === 'FINALIZED').length}</div>
-              </div>
-              <div class="summary-card">
-                <div class="label">In Progress</div>
-                <div class="value">${summary.inProgressCount || agencies.filter((a: any) => a.status === 'IN_PROGRESS' || a.status === 'DRAFT').length}</div>
+                <div class="value">${finalizedCount}</div>
               </div>
               <div class="summary-card">
                 <div class="label">Average Score</div>
-                <div class="value">${summary.averageScore ? summary.averageScore.toFixed(1) : '0'}%</div>
+                <div class="value">${averageScore.toFixed(1)}%</div>
               </div>
             </div>
 
             <h2 class="section-title">Integrity Level Distribution</h2>
             <div class="integrity-distribution">
               <div class="dist-item dist-high">
-                <div class="dist-number">${summary.integrityDistribution?.high || 0}</div>
+                <div class="dist-number">${integrityDist.high}</div>
                 <div>High Integrity</div>
               </div>
               <div class="dist-item dist-medium">
-                <div class="dist-number">${summary.integrityDistribution?.medium || 0}</div>
+                <div class="dist-number">${integrityDist.medium}</div>
                 <div>Medium Integrity</div>
               </div>
               <div class="dist-item dist-low">
-                <div class="dist-number">${summary.integrityDistribution?.low || 0}</div>
+                <div class="dist-number">${integrityDist.low}</div>
                 <div>Needs Improvement</div>
               </div>
             </div>
@@ -766,7 +762,7 @@ export default function PreventionDashboard() {
               </thead>
               <tbody>
                 ${agencies.map((agency: any) => {
-                  const score = agency.score || 0;
+                  const score = agency.score || agency.overall_score || 0;
                   let integrityLevel = 'Needs Improvement';
                   let integrityClass = 'dist-low';
                   
@@ -778,13 +774,18 @@ export default function PreventionDashboard() {
                     integrityClass = 'dist-medium';
                   }
                   
+                  const status = agency.status || 'NOT_STARTED';
+                  const formattedStatus = status === 'FINALIZED' ? 'Finalized' : 
+                                          status === 'IN_PROGRESS' ? 'In Progress' : 'Not Started';
+                  const agencyName = agency.agencyName || agency.agency_name || agency.name || 'Unknown';
+                  
                   return `
                     <tr>
-                      <td><strong>${agency.name}</strong></td>
-                      <td>${agency.sector}</td>
-                      <td>${agency.status?.replace('_', ' ') || 'N/A'}</td>
+                      <td><strong>${agencyName}</strong></td>
+                      <td>${agency.sector || 'N/A'}</td>
+                      <td>${formattedStatus}</td>
                       <td>${score.toFixed(1)}%</td>
-                      <td><span class="${integrityClass}" style="padding: 4px 8px; border-radius: 4px;">${integrityLevel}</span></td>
+                      <td><span class="${integrityClass}" style="padding: 4px 8px; border-radius: 4px; display: inline-block;">${integrityLevel}</span></td>
                     </tr>
                   `;
                 }).join('')}
@@ -793,7 +794,7 @@ export default function PreventionDashboard() {
 
             <div class="footer">
               <p>Report generated on ${new Date().toLocaleString()}</p>
-              <p style="margin-top: 5px;">AIMS Assessment Framework v3.0 • Anti-Corruption Commission</p>
+              <p>AIMS Assessment Framework v3.0 • Anti-Corruption Commission</p>
             </div>
           </div>
         </div>
@@ -814,7 +815,7 @@ export default function PreventionDashboard() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4"></div>
-          <p className="text-gray-600">Loading dashboard...</p>
+          <p className="text-gray-600">Loading dashboard for FY {selectedFY}...</p>
         </div>
       </div>
     );
@@ -847,7 +848,7 @@ export default function PreventionDashboard() {
       />
 
       <div className="p-4 md:p-6 max-w-7xl mx-auto">
-        {/* Header Section */}
+        {/* Header Section with FY Selector */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 mb-2">Prevention Division Dashboard</h1>
@@ -859,6 +860,20 @@ export default function PreventionDashboard() {
             </p>
           </div>
           <div className="mt-4 sm:mt-0 flex flex-wrap gap-2">
+            {/* Fiscal Year Selector */}
+            <div className="flex items-center space-x-2 mr-4">
+              <CalendarIcon className="h-5 w-5 text-gray-500" />
+              <select
+                value={selectedFY}
+                onChange={(e) => setSelectedFY(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-sm"
+              >
+                {generateFiscalYears().map(fy => (
+                  <option key={fy} value={fy}>{fy}</option>
+                ))}
+              </select>
+            </div>
+            
             {/* Agency Report Button */}
             <button
               onClick={() => {
@@ -927,7 +942,7 @@ export default function PreventionDashboard() {
         <div className="mt-8">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">
-              My Assigned Agencies
+              My Assigned Agencies for FY {selectedFY}
               {activeCard && (
                 <span className="ml-2 text-sm font-normal text-gray-500">
                   ({filteredAgencies.length} {activeCard.toLowerCase().replace('_', ' ')})
@@ -945,7 +960,13 @@ export default function PreventionDashboard() {
           </div>
 
           {typedAgencies.length === 0 ? (
-            <EmptyStates fy={selectedFY} state="NO_ASSIGNMENTS" />
+            <EmptyStates 
+              fy={selectedFY} 
+              state="NO_ASSIGNMENTS" 
+              title="No Agencies Assigned"
+              message={`You have not been assigned any agencies for fiscal year ${selectedFY}.`}
+              actionText="Contact Administrator"
+            />
           ) : filteredAgencies.length === 0 && activeCard ? (
             <div className="text-center py-8 bg-white rounded-lg shadow">
               <p className="text-gray-500">No agencies match the selected status filter.</p>
@@ -956,8 +977,6 @@ export default function PreventionDashboard() {
                 Show all agencies
               </button>
             </div>
-          ) : filteredAgencies.length === 0 ? (
-            <EmptyStates fy={selectedFY} state="ALL_FINALIZED" />
           ) : (
             <AgenciesTable 
               agencies={filteredAgencies}
@@ -965,6 +984,7 @@ export default function PreventionDashboard() {
               onFinalizeAssessment={handleFinalizeAssessment}
               onUnlockAssessment={handleUnlockAssessment}
               onViewReport={handleGenerateAgencyReport}
+              fiscalYear={selectedFY}
             />
           )}
         </div>
@@ -1030,7 +1050,7 @@ export default function PreventionDashboard() {
             <div className="border border-gray-200 rounded-lg p-4">
               <h4 className="font-medium text-gray-900 mb-2">Overall Report</h4>
               <p className="text-sm text-gray-600 mb-3">
-                Generate summary report for all assigned agencies
+                Generate summary report for all assigned agencies for FY {selectedFY}
               </p>
               <div className="text-sm text-gray-500 mb-3 space-y-1">
                 <p>• Summary of all agency scores</p>
@@ -1041,8 +1061,16 @@ export default function PreventionDashboard() {
               <button
                 onClick={handleGenerateOverallReport}
                 className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm"
+                disabled={isGeneratingReport}
               >
-                Generate Overall Report (PDF)
+                {isGeneratingReport ? (
+                  <>
+                    <ArrowPathIcon className="h-4 w-4 mr-2 animate-spin inline" />
+                    Generating...
+                  </>
+                ) : (
+                  'Generate Overall Report'
+                )}
               </button>
             </div>
           </div>

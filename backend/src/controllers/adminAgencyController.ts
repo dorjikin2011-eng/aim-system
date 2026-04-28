@@ -3,6 +3,8 @@ import { Request, Response } from 'express';
 import { getDB, getAsync, runAsync, allAsync } from '../models/db';
 import { logAction } from '../services/auditService';
 import nodemailer from 'nodemailer';
+import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 
 // Frontend URL configuration
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://frontend-alpha-nine-65.vercel.app';
@@ -24,7 +26,7 @@ export const getAgencyById = async (req: Request, res: Response) => {
         contact_person, contact_email, contact_phone,
         address, created_at, updated_at
       FROM agencies
-      WHERE id = ?
+      WHERE id = $1
     `, [id]);
 
     if (!agency) {
@@ -52,19 +54,7 @@ export const getPotentialHOAs = async (req: Request, res: Response) => {
   try {
     const db = getDB();
     
-    // Define the expected user type
-    interface PotentialHOA {
-      id: string;
-      email: string;
-      name: string;
-      role: string;
-      phone: string | null;
-      position: string | null;
-      current_agency: string | null;
-      created_at: string;
-    }
-    
-    const users = await allAsync<PotentialHOA[]>(db, 
+    const users = await allAsync<any>(db, 
       `SELECT 
         u.id,
         u.email,
@@ -77,7 +67,7 @@ export const getPotentialHOAs = async (req: Request, res: Response) => {
       FROM users u
       LEFT JOIN agencies a ON u.agency_id = a.id
       WHERE u.role IN ('agency_head', 'focal_person', 'prevention_officer', 'commissioner', 'director')
-        AND u.is_active = 1
+        AND u.is_active = true
         AND u.id NOT IN (
           SELECT hoa_user_id FROM agencies WHERE hoa_user_id IS NOT NULL
         )
@@ -87,7 +77,7 @@ export const getPotentialHOAs = async (req: Request, res: Response) => {
     
     res.json({
       success: true,
-      users: users.map((user: PotentialHOA) => ({
+      users: users.map((user: any) => ({
         id: user.id,
         email: user.email,
         name: user.name,
@@ -104,6 +94,261 @@ export const getPotentialHOAs = async (req: Request, res: Response) => {
       success: false, 
       error: 'Failed to fetch potential HoAs' 
     });
+  }
+};
+
+// ============================================
+// GET /api/admin/agencies
+// ============================================
+export const getAgencies = async (req: Request, res: Response) => {
+  try {
+    const db = getDB();
+    
+    const agencies = await allAsync<any>(db, `
+      SELECT 
+        a.id, 
+        a.name, 
+        a.sector, 
+        a.agency_type, 
+        a.status, 
+        a.address, 
+        a.website,
+        a.contact_email, 
+        a.contact_phone, 
+        a.contact_person,
+        a.hoa_name, 
+        a.hoa_email, 
+        a.hoa_phone,
+        a.focal_person_name, 
+        a.focal_person_email, 
+        a.focal_person_phone,
+        a.created_at, 
+        a.updated_at,
+        COUNT(u.id) as user_count
+      FROM agencies a
+      LEFT JOIN users u ON u.agency_id = a.id
+      GROUP BY a.id
+      ORDER BY a.name
+    `);
+
+    res.json({ 
+      success: true,
+      agencies: agencies 
+    });
+  } catch (err) {
+    console.error('Agency list error:', err);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch agencies' 
+    });
+  }
+};
+
+// ============================================
+// POST /api/admin/agencies
+// ============================================
+export const createAgency = async (req: Request, res: Response) => {
+  const { name, sector } = req.body;
+
+  if (!name?.trim() || !sector?.trim()) {
+    return res.status(400).json({ error: 'Name and sector are required' });
+  }
+
+  try {
+    const db = getDB();
+    
+    const existing = await getAsync<any>(db, 
+      'SELECT id FROM agencies WHERE LOWER(name) = LOWER($1)', 
+      [name.trim()]
+    );
+
+    if (existing) {
+      return res.status(409).json({ error: 'Agency with this name already exists' });
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    await runAsync(db,
+      `INSERT INTO agencies (id, name, sector, created_at) VALUES ($1, $2, $3, $4)`,
+      [id, name.trim(), sector.trim(), now]
+    );
+
+    // Audit log
+    try {
+      await logAction(req, 'create_agency', { type: 'agency', id }, { name, sector });
+    } catch (auditError) {
+      console.error('[AUDIT ERROR] Failed to log agency creation:', auditError);
+    }
+
+    res.status(201).json({ 
+      agency: { id, name: name.trim(), sector: sector.trim(), created_at: now } 
+    });
+  } catch (err) {
+    console.error('Agency create error:', err);
+    res.status(500).json({ error: 'Failed to create agency' });
+  }
+};
+
+// ============================================
+// PUT /api/admin/agencies/:id
+// ============================================
+export const updateAgency = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { 
+    name, 
+    sector, 
+    agency_type,
+    status,
+    address,
+    website,
+    contactEmail, 
+    contactPhone, 
+    contactPerson,
+    hoa_name,
+    hoa_email,
+    hoa_phone,
+    focal_person_name,
+    focal_person_email,
+    focal_person_phone,
+    hoaUserId 
+  } = req.body;
+
+  if (!name?.trim() || !sector?.trim()) {
+    return res.status(400).json({ error: 'Name and sector are required' });
+  }
+
+  try {
+    const db = getDB();
+
+    const current = await getAsync<any>(db, 
+      'SELECT * FROM agencies WHERE id = $1', 
+      [id]
+    );
+
+    if (!current) {
+      return res.status(404).json({ error: 'Agency not found' });
+    }
+
+    const now = new Date().toISOString();
+
+    await runAsync(db,
+      `UPDATE agencies SET 
+        name = $1, 
+        sector = $2, 
+        agency_type = $3,
+        status = $4, 
+        address = $5, 
+        website = $6, 
+        contact_email = $7, 
+        contact_phone = $8, 
+        contact_person = $9,
+        hoa_name = $10,
+        hoa_email = $11,
+        hoa_phone = $12,
+        focal_person_name = $13,
+        focal_person_email = $14,
+        focal_person_phone = $15,
+        hoa_user_id = $16, 
+        updated_at = $17
+       WHERE id = $18`,
+      [
+        name.trim(),
+        sector.trim(),
+        agency_type || current.agency_type,
+        status || current.status,
+        address?.trim() || null,
+        website?.trim() || null,
+        contactEmail?.trim() || null,
+        contactPhone?.trim() || null,
+        contactPerson?.trim() || null,
+        hoa_name?.trim() || null,
+        hoa_email?.trim() || null,
+        hoa_phone?.trim() || null,
+        focal_person_name?.trim() || null,
+        focal_person_email?.trim() || null,
+        focal_person_phone?.trim() || null,
+        hoaUserId || current.hoa_user_id,
+        now,
+        id
+      ]
+    );
+
+    // Audit log
+    try {
+      await logAction(req, 'update_agency', { type: 'agency', id }, {
+        name: name.trim(),
+        sector: sector.trim(),
+        status: status || current.status,
+        updated_fields: Object.keys(req.body)
+      });
+    } catch (auditError) {
+      console.error('[AUDIT ERROR] Failed to log agency update:', auditError);
+    }
+
+    res.json({ 
+      success: true,
+      message: 'Agency updated successfully',
+      agency: { 
+        id, 
+        name: name.trim(), 
+        sector: sector.trim(),
+        status: status || current.status,
+        updated_at: now 
+      } 
+    });
+
+  } catch (err) {
+    console.error('Agency update error:', err);
+    res.status(500).json({ error: 'Failed to update agency' });
+  }
+};
+
+// ============================================
+// DELETE /api/admin/agencies/:id
+// ============================================
+export const deleteAgency = async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const db = getDB();
+
+    const usageResult = await getAsync<any>(db, 
+      'SELECT COUNT(*) as user_count FROM users WHERE agency_id = $1',
+      [id]
+    );
+
+    const userCount = parseInt(usageResult?.user_count || '0');
+    
+    if (userCount > 0) {
+      return res.status(400).json({ 
+        error: `Cannot delete: ${userCount} users depend on this agency` 
+      });
+    }
+
+    // Get name for audit
+    const agency = await getAsync<any>(db, 
+      'SELECT name, sector FROM agencies WHERE id = $1', 
+      [id]
+    );
+
+    if (!agency) {
+      return res.status(404).json({ error: 'Agency not found' });
+    }
+
+    await runAsync(db, 'DELETE FROM agencies WHERE id = $1', [id]);
+
+    // Audit log
+    try {
+      await logAction(req, 'delete_agency', { type: 'agency', id }, agency);
+    } catch (auditError) {
+      console.error('[AUDIT ERROR] Failed to log agency deletion:', auditError);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Agency delete error:', err);
+    res.status(500).json({ error: 'Failed to delete agency' });
   }
 };
 
@@ -346,11 +591,37 @@ const sendHoaNotification = async (
   }
 };
 
+// Helper function to hash password
+const hashPassword = async (password: string): Promise<string> => {
+  const salt = await bcrypt.genSalt(10);
+  return bcrypt.hash(password, salt);
+};
+
+// Helper function to generate temporary password
+function generateTemporaryPassword(): string {
+  const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const lower = 'abcdefghijklmnopqrstuvwxyz';
+  const numbers = '0123456789';
+  
+  let password = upper.charAt(Math.floor(Math.random() * upper.length));
+  password += lower.charAt(Math.floor(Math.random() * lower.length));
+  password += numbers.charAt(Math.floor(Math.random() * numbers.length));
+  password += numbers.charAt(Math.floor(Math.random() * numbers.length));
+  
+  const allChars = upper + lower + numbers;
+  for (let i = 0; i < 4; i++) {
+    password += allChars.charAt(Math.floor(Math.random() * allChars.length));
+  }
+  
+  return password.split('').sort(() => Math.random() - 0.5).join('');
+}
+
 // ============================================
 // POST /api/admin/agencies/create-with-hoa
 // ============================================
 export const createAgencyWithHOA = async (req: Request, res: Response) => {
   const db = getDB();
+  const client = await db.connect();
   
   try {
     const { agency, hoa, useExistingUser, sendEmailNotification = true } = req.body;
@@ -378,17 +649,17 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
     }
 
     // Start transaction
-    await runAsync(db, 'BEGIN TRANSACTION');
+    await client.query('BEGIN');
 
     try {
       // Step 1: Check if agency already exists
-      const existingAgency = await getAsync<any>(db, 
-        'SELECT id FROM agencies WHERE LOWER(name) = LOWER(?) OR LOWER(contact_email) = LOWER(?)',
+      const existingAgency = await client.query(
+        'SELECT id FROM agencies WHERE LOWER(name) = LOWER($1) OR LOWER(contact_email) = LOWER($2)',
         [agency.name.trim(), agency.contactEmail.trim()]
       );
       
-      if (existingAgency) {
-        await runAsync(db, 'ROLLBACK');
+      if (existingAgency.rows.length > 0) {
+        await client.query('ROLLBACK');
         return res.status(400).json({ 
           success: false, 
           error: 'Agency with this name or contact email already exists' 
@@ -402,14 +673,14 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
 
       if (useExistingUser && hoa.existingUserId) {
         // Case 1: Assign existing user as HoA
-        const existingUser = await getAsync<any>(db, 
+        const existingUser = await client.query(
           `SELECT id, role, email, name FROM users 
-           WHERE id = ? AND is_active = 1`,
+           WHERE id = $1 AND is_active = true`,
           [hoa.existingUserId]
         );
 
-        if (!existingUser) {
-          await runAsync(db, 'ROLLBACK');
+        if (existingUser.rows.length === 0) {
+          await client.query('ROLLBACK');
           return res.status(400).json({ 
             success: false, 
             error: 'Selected user not found or inactive' 
@@ -417,13 +688,13 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         }
 
         // Check if user is already HoA elsewhere
-        const isAlreadyHoA = await getAsync<any>(db, 
-          'SELECT id FROM agencies WHERE hoa_user_id = ?',
+        const isAlreadyHoA = await client.query(
+          'SELECT id FROM agencies WHERE hoa_user_id = $1',
           [hoa.existingUserId]
         );
 
-        if (isAlreadyHoA) {
-          await runAsync(db, 'ROLLBACK');
+        if (isAlreadyHoA.rows.length > 0) {
+          await client.query('ROLLBACK');
           return res.status(400).json({ 
             success: false, 
             error: 'This user is already Head of Agency for another agency' 
@@ -433,24 +704,24 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         hoaUserId = hoa.existingUserId;
 
         // Update user's role to agency_head
-        await runAsync(db, 
+        await client.query(
           `UPDATE users SET 
             role = 'agency_head', 
             agency_id = NULL,
             updated_at = CURRENT_TIMESTAMP 
-           WHERE id = ?`,
+           WHERE id = $1`,
           [hoaUserId]
         );
 
       } else {
         // Case 2: Create new HoA user
-        const existingEmail = await getAsync<any>(db, 
-          'SELECT id FROM users WHERE LOWER(email) = LOWER(?)',
+        const existingEmail = await client.query(
+          'SELECT id FROM users WHERE LOWER(email) = LOWER($1)',
           [hoa.email.trim()]
         );
 
-        if (existingEmail) {
-          await runAsync(db, 'ROLLBACK');
+        if (existingEmail.rows.length > 0) {
+          await client.query('ROLLBACK');
           return res.status(400).json({ 
             success: false, 
             error: 'User with this email already exists' 
@@ -460,21 +731,23 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         // Generate temporary password
         tempPassword = generateTemporaryPassword();
         
-        // Create new user
-        const userId = `USR_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-        const passwordHash = tempPassword; // In production, hash this!
+        // Hash the password
+        const hashedPassword = await hashPassword(tempPassword);
         
-        await runAsync(db, 
+        // Create new user with UUID
+        const userId = crypto.randomUUID();
+        
+        await client.query(
           `INSERT INTO users 
            (id, email, name, role, phone, position, password_hash, is_active, created_at)
-           VALUES (?, ?, ?, 'agency_head', ?, ?, ?, 1, CURRENT_TIMESTAMP)`,
+           VALUES ($1, $2, $3, 'agency_head', $4, $5, $6, true, CURRENT_TIMESTAMP)`,
           [
             userId,
             hoa.email.trim(),
             hoa.name.trim(),
             hoa.phone?.trim() || null,
             hoa.position?.trim() || null,
-            passwordHash
+            hashedPassword
           ]
         );
 
@@ -482,14 +755,14 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
         isNewUser = true;
       }
 
-      // Step 3: Create the agency
-      const agencyId = `AGY_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+      // Step 3: Create the agency with UUID
+      const agencyId = crypto.randomUUID();
       
-      await runAsync(db, 
+      await client.query(
         `INSERT INTO agencies 
          (id, name, sector, contact_email, contact_phone, address, website, 
           hoa_user_id, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', CURRENT_TIMESTAMP)`,
         [
           agencyId,
           agency.name.trim(),
@@ -503,8 +776,8 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
       );
 
       // Step 4: Update HoA user with agency_id
-      await runAsync(db, 
-        'UPDATE users SET agency_id = ? WHERE id = ?',
+      await client.query(
+        'UPDATE users SET agency_id = $1 WHERE id = $2',
         [agencyId, hoaUserId]
       );
 
@@ -549,7 +822,7 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
       }
 
       // Commit transaction
-      await runAsync(db, 'COMMIT');
+      await client.query('COMMIT');
 
       // Step 7: Prepare response
       const responseData: any = {
@@ -594,7 +867,7 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
       });
 
     } catch (err) {
-      await runAsync(db, 'ROLLBACK');
+      await client.query('ROLLBACK');
       throw err;
     }
 
@@ -605,283 +878,7 @@ export const createAgencyWithHOA = async (req: Request, res: Response) => {
       error: 'Failed to create agency with Head of Agency',
       details: process.env.NODE_ENV === 'development' ? (err instanceof Error ? err.message : 'Unknown error') : undefined
     });
-  }
-};
-
-// Helper function to generate temporary password
-function generateTemporaryPassword(): string {
-  const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const lower = 'abcdefghijklmnopqrstuvwxyz';
-  const numbers = '0123456789';
-  
-  let password = upper.charAt(Math.floor(Math.random() * upper.length));
-  password += lower.charAt(Math.floor(Math.random() * lower.length));
-  password += numbers.charAt(Math.floor(Math.random() * numbers.length));
-  password += numbers.charAt(Math.floor(Math.random() * numbers.length));
-  
-  const allChars = upper + lower + numbers;
-  for (let i = 0; i < 4; i++) {
-    password += allChars.charAt(Math.floor(Math.random() * allChars.length));
-  }
-  
-  return password.split('').sort(() => Math.random() - 0.5).join('');
-}
-
-// ============================================
-// GET /api/admin/agencies
-// ============================================
-export const getAgencies = async (req: Request, res: Response) => {
-  try {
-    const db = getDB();
-    
-    const agencies = await allAsync<any[]>(db, 
-      `SELECT 
-        a.id, 
-        a.name, 
-        a.sector, 
-        a.agency_type, 
-        a.status, 
-        a.address, 
-        a.website,
-        a.contact_email, 
-        a.contact_phone, 
-        a.contact_person,
-        a.hoa_name, 
-        a.hoa_email, 
-        a.hoa_phone,
-        a.focal_person_name, 
-        a.focal_person_email, 
-        a.focal_person_phone,
-        a.hoa_user_id,
-        a.created_at, 
-        a.updated_at,
-        COUNT(u.id) as user_count
-       FROM agencies a
-       LEFT JOIN users u ON u.agency_id = a.id
-       GROUP BY a.id
-       ORDER BY a.name`,
-      []
-    );
-
-    res.json({ 
-      success: true,
-      agencies 
-    });
-  } catch (err) {
-    console.error('Agency list error:', err);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to fetch agencies' 
-    });
-  }
-};
-
-// ============================================
-// POST /api/admin/agencies
-// ============================================
-export const createAgency = async (req: Request, res: Response) => {
-  const { name, sector } = req.body;
-
-  if (!name?.trim() || !sector?.trim()) {
-    return res.status(400).json({ error: 'Name and sector are required' });
-  }
-
-  try {
-    const db = getDB();
-    
-    // Check duplicate
-    const existing = await getAsync<any>(db, 
-      'SELECT id FROM agencies WHERE LOWER(name) = LOWER(?)', 
-      [name.trim()]
-    );
-
-    if (existing) {
-      return res.status(409).json({ error: 'Agency with this name already exists' });
-    }
-
-    const id = `AGY_${Date.now()}_${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
-    const now = new Date().toISOString();
-
-    await runAsync(db, 
-      `INSERT INTO agencies (id, name, sector, created_at) VALUES (?, ?, ?, ?)`,
-      [id, name.trim(), sector.trim(), now]
-    );
-
-    // Audit log
-    try {
-      await logAction(req, 'create_agency', { type: 'agency', id }, { name, sector });
-    } catch (auditError) {
-      console.error('[AUDIT ERROR] Failed to log agency creation:', auditError);
-    }
-
-    res.status(201).json({ 
-      agency: { id, name: name.trim(), sector: sector.trim(), created_at: now } 
-    });
-  } catch (err) {
-    console.error('Agency create error:', err);
-    res.status(500).json({ error: 'Failed to create agency' });
-  }
-};
-
-// ============================================
-// PUT /api/admin/agencies/:id
-// ============================================
-export const updateAgency = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { 
-    name, 
-    sector, 
-    agency_type,
-    status,
-    address,
-    website,
-    contactEmail, 
-    contactPhone, 
-    contactPerson,
-    hoa_name,
-    hoa_email,
-    hoa_phone,
-    focal_person_name,
-    focal_person_email,
-    focal_person_phone,
-    hoaUserId 
-  } = req.body;
-
-  if (!name?.trim() || !sector?.trim()) {
-    return res.status(400).json({ error: 'Name and sector are required' });
-  }
-
-  try {
-    const db = getDB();
-
-    // Get current agency data
-    const current = await getAsync<any>(db, 
-      'SELECT * FROM agencies WHERE id = ?', 
-      [id]
-    );
-
-    if (!current) {
-      return res.status(404).json({ error: 'Agency not found' });
-    }
-
-    const now = new Date().toISOString();
-
-    // Update the agencies table
-    await runAsync(db, 
-      `UPDATE agencies SET 
-        name = ?, 
-        sector = ?, 
-        agency_type = ?,
-        status = ?, 
-        address = ?, 
-        website = ?, 
-        contact_email = ?, 
-        contact_phone = ?, 
-        contact_person = ?,
-        hoa_name = ?,
-        hoa_email = ?,
-        hoa_phone = ?,
-        focal_person_name = ?,
-        focal_person_email = ?,
-        focal_person_phone = ?,
-        hoa_user_id = ?, 
-        updated_at = ?
-       WHERE id = ?`,
-      [
-        name.trim(),
-        sector.trim(),
-        agency_type || current.agency_type,
-        status || current.status,
-        address?.trim() || null,
-        website?.trim() || null,
-        contactEmail?.trim() || null,
-        contactPhone?.trim() || null,
-        contactPerson?.trim() || null,
-        hoa_name?.trim() || null,
-        hoa_email?.trim() || null,
-        hoa_phone?.trim() || null,
-        focal_person_name?.trim() || null,
-        focal_person_email?.trim() || null,
-        focal_person_phone?.trim() || null,
-        hoaUserId || current.hoa_user_id,
-        now,
-        id
-      ]
-    );
-
-    // Audit log
-    try {
-      await logAction(req, 'update_agency', { type: 'agency', id }, {
-        name: name.trim(),
-        sector: sector.trim(),
-        status: status || current.status,
-        updated_fields: Object.keys(req.body)
-      });
-    } catch (auditError) {
-      console.error('[AUDIT ERROR] Failed to log agency update:', auditError);
-    }
-
-    res.json({ 
-      success: true,
-      message: 'Agency updated successfully',
-      agency: { 
-        id, 
-        name: name.trim(), 
-        sector: sector.trim(),
-        status: status || current.status,
-        updated_at: now 
-      } 
-    });
-
-  } catch (err) {
-    console.error('Agency update error:', err);
-    res.status(500).json({ error: 'Failed to update agency' });
-  }
-};
-
-// ============================================
-// DELETE /api/admin/agencies/:id
-// ============================================
-export const deleteAgency = async (req: Request, res: Response) => {
-  const { id } = req.params;
-
-  try {
-    const db = getDB();
-
-    // Check if used by users
-    const usage = await getAsync<any>(db, 
-      `SELECT COUNT(*) as users FROM users WHERE agency_id = ?`,
-      [id]
-    );
-
-    if (usage && usage.users > 0) {
-      return res.status(400).json({ 
-        error: `Cannot delete: ${usage.users} users depend on this agency` 
-      });
-    }
-
-    // Get name for audit
-    const agency = await getAsync<any>(db, 
-      'SELECT name, sector FROM agencies WHERE id = ?', 
-      [id]
-    );
-
-    if (!agency) {
-      return res.status(404).json({ error: 'Agency not found' });
-    }
-
-    await runAsync(db, 'DELETE FROM agencies WHERE id = ?', [id]);
-
-    // Audit log
-    try {
-      await logAction(req, 'delete_agency', { type: 'agency', id }, agency);
-    } catch (auditError) {
-      console.error('[AUDIT ERROR] Failed to log agency deletion:', auditError);
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Agency delete error:', err);
-    res.status(500).json({ error: 'Failed to delete agency' });
+  } finally {
+    client.release();
   }
 };

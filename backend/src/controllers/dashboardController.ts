@@ -18,14 +18,23 @@ export async function getDashboardData(req: Request, res: Response) {
   try {
     const db = getDB();
     
+    // Get the logged-in user's ID
+    const userId = (req as any).user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
     // Calculate current fiscal year (e.g., 2026–2027)
     const currentYear = new Date().getFullYear();
     const fiscalYear = `${currentYear}–${currentYear + 1}`;
     
+    console.log('📊 Fetching dashboard for officer:', userId);
     console.log('📊 Using fiscal year:', fiscalYear);
     
-    // Get all agencies with their latest assessment status
-    const agencies = await allAsync<AgencyRow[]>(db, `
+    // Get ONLY agencies assigned to this prevention officer
+    // ✅ FIXED: Added JOIN to assignments and WHERE clause
+    const agencies = await allAsync<AgencyRow>(db, `
       SELECT 
         a.id,
         a.name,
@@ -33,10 +42,14 @@ export async function getDashboardData(req: Request, res: Response) {
         COALESCE(ass.status, 'DRAFT') as status,
         COALESCE(ass.updated_at, a.created_at) as lastUpdated
       FROM agencies a
-      LEFT JOIN assessments ass ON a.id = ass.agency_id AND ass.fiscal_year = ?
+      INNER JOIN assignments assgn ON a.id = assgn.agency_id 
+        AND assgn.prevention_officer_id = $1
+        AND assgn.status = 'active'
+      LEFT JOIN assessments ass ON a.id = ass.agency_id AND ass.fiscal_year = $2
       ORDER BY a.name
-    `, [fiscalYear]);
+    `, [userId, fiscalYear]);
 
+    console.log('📊 Found assigned agencies:', agencies.length);
     console.log('📊 Raw agencies from DB:', JSON.stringify(agencies, null, 2));
 
     // Calculate progress and risk level (simplified)
@@ -67,6 +80,17 @@ export async function getDashboardData(req: Request, res: Response) {
 
       console.log(`📊 Processed agency ${agency.id}: displayStatus = ${displayStatus}, progress = ${progress}`);
       
+      // Safely format the date
+      let formattedDate = 'N/A';
+      try {
+        if (agency.lastUpdated) {
+          formattedDate = new Date(agency.lastUpdated).toLocaleDateString('en-GB');
+        }
+      } catch (dateError) {
+        console.warn(`Error formatting date for agency ${agency.id}:`, dateError);
+        formattedDate = new Date().toLocaleDateString('en-GB');
+      }
+      
       return {
         id: agency.id,
         name: agency.name,
@@ -74,7 +98,7 @@ export async function getDashboardData(req: Request, res: Response) {
         status: displayStatus,
         progress: progress,
         riskLevel: 'Low',
-        lastUpdated: new Date(agency.lastUpdated).toLocaleDateString('en-GB')
+        lastUpdated: formattedDate
       };
     });
 

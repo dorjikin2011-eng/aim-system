@@ -1,10 +1,10 @@
+// backend/src/controllers/FormTemplateController.ts
 
-//backend/src/controllers/FormTemplateController.ts
 import { Request, Response } from 'express';
-import { FormTemplate } from '../models/FormTemplate';
+import { FormTemplate as FormTemplateModel } from '../models/FormTemplate';
 import { ConfigValidator } from '../utils/ConfigValidator';
 import { FormGenerator } from '../utils/FormGenerator';
-import { TemplateType } from '../types/config'; // Added import
+import { TemplateType } from '../types/config';
 
 export class FormTemplateController {
   
@@ -13,7 +13,8 @@ export class FormTemplateController {
     try {
       const { category, activeOnly = 'false', page = 1, limit = 20 } = req.query;
       
-      const templates = await FormTemplate.getAll({
+      // Use getAllWithPagination when page/limit are provided
+      const templates = await FormTemplateModel.getAllWithPagination({
         category: category as string,
         activeOnly: activeOnly === 'true',
         page: Number(page),
@@ -38,7 +39,7 @@ export class FormTemplateController {
   static async getTemplateById(req: Request, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const template = await FormTemplate.getById(id);
+      const template = await FormTemplateModel.getById(id);
       
       if (!template) {
         res.status(404).json({
@@ -79,13 +80,13 @@ export class FormTemplateController {
       }
       
       // Create template
-      const id = await FormTemplate.create({
+      const id = await FormTemplateModel.create({
         ...templateData,
-        createdBy: userId, // Changed from created_by to createdBy
+        createdBy: userId,
       });
       
       // Get the created template
-      const template = await FormTemplate.getById(id);
+      const template = await FormTemplateModel.getById(id);
       
       res.status(201).json({
         success: true,
@@ -117,7 +118,7 @@ export class FormTemplateController {
       const userId = (req as any).user?.id || 'system';
       
       // Get current template
-      const currentTemplate = await FormTemplate.getById(id);
+      const currentTemplate = await FormTemplateModel.getById(id);
       if (!currentTemplate) {
         res.status(404).json({
           success: false,
@@ -139,14 +140,14 @@ export class FormTemplateController {
       }
       
       // Update template
-      const success = await FormTemplate.update(id, updates, userId);
+      const success = await FormTemplateModel.update(id, updates, userId);
       
       if (!success) {
         throw new Error('Failed to update template');
       }
       
       // Get the updated template
-      const template = await FormTemplate.getById(id);
+      const template = await FormTemplateModel.getById(id);
       
       res.json({
         success: true,
@@ -180,9 +181,9 @@ export class FormTemplateController {
       let success: boolean;
       
       if (hardDelete === 'true') {
-        success = await FormTemplate.hardDelete(id);
+        success = await FormTemplateModel.hardDelete(id);
       } else {
-        success = await FormTemplate.delete(id, userId);
+        success = await FormTemplateModel.delete(id, userId);
       }
       
       if (!success) {
@@ -215,7 +216,7 @@ export class FormTemplateController {
       const { newName } = req.body;
       const userId = (req as any).user?.id || 'system';
       
-      const template = await FormTemplate.getById(id);
+      const template = await FormTemplateModel.getById(id);
       if (!template) {
         res.status(404).json({
           success: false,
@@ -225,8 +226,8 @@ export class FormTemplateController {
       }
       
       // Create duplicate
-      const duplicateId = await FormTemplate.duplicate(id, newName, userId);
-      const duplicate = await FormTemplate.getById(duplicateId);
+      const duplicateId = await FormTemplateModel.duplicate(id, newName, userId);
+      const duplicate = await FormTemplateModel.getById(duplicateId);
       
       res.status(201).json({
         success: true,
@@ -269,7 +270,7 @@ export class FormTemplateController {
       const { id } = req.params;
       const userId = (req as any).user?.id || 'system';
       
-      const success = await FormTemplate.publish(id, userId);
+      const success = await FormTemplateModel.publish(id, userId);
       
       if (!success) {
         res.status(404).json({
@@ -279,7 +280,7 @@ export class FormTemplateController {
         return;
       }
       
-      const template = await FormTemplate.getById(id);
+      const template = await FormTemplateModel.getById(id);
       
       res.json({
         success: true,
@@ -301,7 +302,7 @@ export class FormTemplateController {
       const { id } = req.params;
       const userId = (req as any).user?.id || 'system';
       
-      const success = await FormTemplate.unpublish(id, userId);
+      const success = await FormTemplateModel.unpublish(id, userId);
       
       if (!success) {
         res.status(404).json({
@@ -311,7 +312,7 @@ export class FormTemplateController {
         return;
       }
       
-      const template = await FormTemplate.getById(id);
+      const template = await FormTemplateModel.getById(id);
       
       res.json({
         success: true,
@@ -332,8 +333,7 @@ export class FormTemplateController {
     try {
       const { category } = req.query;
       
-      // Fix: Pass category as TemplateType or undefined
-      const templates = await FormTemplate.getActiveTemplates(category as TemplateType | undefined);
+      const templates = await FormTemplateModel.getActiveTemplates(category as TemplateType | undefined);
       
       res.json({
         success: true,
@@ -353,7 +353,7 @@ export class FormTemplateController {
     try {
       const { id } = req.params;
       
-      const versions = await FormTemplate.getVersions(id);
+      const versions = await FormTemplateModel.getVersions(id);
       
       res.json({
         success: true,
@@ -374,13 +374,13 @@ export class FormTemplateController {
       const { id, versionId } = req.params;
       const userId = (req as any).user?.id || 'system';
       
-      const success = await FormTemplate.restoreVersion(id, versionId, userId);
+      const success = await FormTemplateModel.restoreVersion(id, versionId, userId);
       
       if (!success) {
         throw new Error('Failed to restore version');
       }
       
-      const template = await FormTemplate.getById(id);
+      const template = await FormTemplateModel.getById(id);
       
       res.json({
         success: true,
@@ -410,7 +410,7 @@ export class FormTemplateController {
       const { id } = req.params;
       const { testData } = req.body;
       
-      const template = await FormTemplate.getById(id);
+      const template = await FormTemplateModel.getById(id);
       if (!template) {
         res.status(404).json({
           success: false,

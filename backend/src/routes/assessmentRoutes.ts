@@ -17,7 +17,7 @@ import {
   getSummaryReport
 } from '../controllers/assessmentController';
 
-import { requireAuth, requireRole } from '../middleware/auth';
+import { requireAuth, requireRole, requireWriteAccess } from '../middleware/auth';
 
 const router = Router();
 
@@ -57,6 +57,7 @@ router.get(
 router.post(
   '/save',
   requireRole(['prevention_officer']),
+  requireWriteAccess,  // ← ADD THIS
   saveIndicatorAssessment
 );
 
@@ -64,6 +65,7 @@ router.post(
 router.post(
   '/save-all',
   requireRole(['prevention_officer']),
+  requireWriteAccess,  // ← ADD THIS
   saveAllAssessments
 );
 
@@ -75,6 +77,7 @@ router.post(
 router.post(
   '/submit',
   requireRole(['prevention_officer']),
+  requireWriteAccess,  // ← ADD THIS
   submitAssessment
 );
 
@@ -82,6 +85,7 @@ router.post(
 router.post(
   '/validate/:agencyId',
   requireRole(['commissioner', 'director', 'admin', 'system_admin']),
+  requireWriteAccess,  // ← ADD THIS
   validateAssessment
 );
 
@@ -89,6 +93,7 @@ router.post(
 router.post(
   '/finalize/:agencyId',
   requireRole(['prevention_officer', 'admin', 'system_admin']),
+  requireWriteAccess,  // ← ADD THIS
   finalizeAssessment
 );
 
@@ -96,6 +101,7 @@ router.post(
 router.post(
   '/unlock/:agencyId',
   requireRole(['prevention_officer', 'admin', 'system_admin']),
+  requireWriteAccess,  // ← ADD THIS
   unlockAssessment
 );
 
@@ -107,6 +113,7 @@ router.post(
 router.post(
   '/calculate-score',
   requireRole(['prevention_officer']),
+  requireWriteAccess,  // ← ADD THIS
   calculateIndicatorScore
 );
 
@@ -118,6 +125,7 @@ router.post(
 router.get(
   '/form/generate',
   requireRole(['prevention_officer', 'admin', 'system_admin']),
+  requireWriteAccess,  // ← ADD THIS
   generateAssessmentForm
 );
 
@@ -125,6 +133,7 @@ router.get(
 router.post(
   '/form/validate',
   requireRole(['prevention_officer']),
+  requireWriteAccess,  // ← ADD THIS
   validateFormData
 );
 

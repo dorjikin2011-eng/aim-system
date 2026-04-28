@@ -1,3 +1,4 @@
+//backend/src/routes/indicatorConfig.ts
 import { Router } from 'express';
 import { IndicatorConfigController } from '../controllers/IndicatorConfigController';
 

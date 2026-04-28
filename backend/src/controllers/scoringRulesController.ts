@@ -14,19 +14,22 @@ export const getScoringRules = async (req: Request, res: Response) => {
     query += ' LEFT JOIN indicators i ON sr.indicator_id = i.id';
     query += ' WHERE 1=1';
     const params: any[] = [];
+    let paramCounter = 1;
     
     if (indicator_id) {
-      query += ' AND sr.indicator_id = ?';
+      query += ` AND sr.indicator_id = $${paramCounter}`;
       params.push(indicator_id);
+      paramCounter++;
     }
     
     if (include_inactive !== 'true') {
-      query += ' AND sr.is_active = 1';
+      query += ` AND sr.is_active = true`;
     }
     
     query += ' ORDER BY i.display_order, sr.parameter, sr.points DESC';
     
-    const rows = await allAsync<any[]>(db, query, params);
+    // FIXED: Changed generic type
+    const rows = await allAsync<any>(db, query, params);
     
     res.json({ success: true, data: rows });
   } catch (err) {
@@ -53,9 +56,10 @@ export const createScoringRule = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Verify indicator exists and is active
+    // FIXED: Changed ? to $1 and is_active = 1 to true
     const indicator = await getAsync<any>(
       db, 
-      'SELECT id, name FROM indicators WHERE id = ? AND is_active = 1', 
+      'SELECT id, name FROM indicators WHERE id = $1 AND is_active = true', 
       [indicator_id]
     );
     
@@ -64,10 +68,12 @@ export const createScoringRule = async (req: Request, res: Response) => {
     }
 
     // Insert new scoring rule
-    await runAsync(db, 
+    // FIXED: Changed ? to $1, $2, etc.
+    const result = await runAsync(db, 
       `INSERT INTO scoring_rules 
        (indicator_id, parameter, points, min_value, max_value, condition, description, is_active, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9)
+       RETURNING id`,
       [
         indicator_id, 
         parameter || null, 
@@ -81,17 +87,24 @@ export const createScoringRule = async (req: Request, res: Response) => {
       ]
     );
 
-    // Get the last inserted ID (for SQLite, we can query it)
-    const lastRule = await getAsync<{ id: number }>(
-      db,
-      'SELECT last_insert_rowid() as id',
-      []
-    );
+    // For PostgreSQL with RETURNING, we can get the ID from the result
+    // Since runAsync doesn't return rows, we need to query for the last inserted ID
+    let lastId: number | null = null;
+    try {
+      const lastRule = await getAsync<{ id: number }>(
+        db,
+        'SELECT id FROM scoring_rules ORDER BY id DESC LIMIT 1',
+        []
+      );
+      lastId = lastRule?.id || null;
+    } catch (err) {
+      console.warn('Could not retrieve last inserted ID:', err);
+    }
 
     res.json({ 
       success: true, 
       message: 'Scoring rule created',
-      id: lastRule?.id,
+      id: lastId,
       indicator: indicator.name
     });
   } catch (err) {
@@ -118,43 +131,53 @@ export const updateScoringRule = async (req: Request, res: Response) => {
     // Build dynamic update query
     const updates: string[] = [];
     const params: any[] = [];
+    let paramCounter = 1;
     
     if (indicator_id !== undefined) {
-      updates.push('indicator_id = ?');
+      updates.push(`indicator_id = $${paramCounter}`);
       params.push(indicator_id);
+      paramCounter++;
     }
     if (parameter !== undefined) {
-      updates.push('parameter = ?');
+      updates.push(`parameter = $${paramCounter}`);
       params.push(parameter);
+      paramCounter++;
     }
     if (points !== undefined) {
-      updates.push('points = ?');
+      updates.push(`points = $${paramCounter}`);
       params.push(points);
+      paramCounter++;
     }
     if (min_value !== undefined) {
-      updates.push('min_value = ?');
+      updates.push(`min_value = $${paramCounter}`);
       params.push(min_value);
+      paramCounter++;
     }
     if (max_value !== undefined) {
-      updates.push('max_value = ?');
+      updates.push(`max_value = $${paramCounter}`);
       params.push(max_value);
+      paramCounter++;
     }
     if (condition !== undefined) {
-      updates.push('condition = ?');
+      updates.push(`condition = $${paramCounter}`);
       params.push(condition);
+      paramCounter++;
     }
     if (description !== undefined) {
-      updates.push('description = ?');
+      updates.push(`description = $${paramCounter}`);
       params.push(description);
+      paramCounter++;
     }
     if (is_active !== undefined) {
-      updates.push('is_active = ?');
-      params.push(is_active ? 1 : 0);
+      updates.push(`is_active = $${paramCounter}`);
+      params.push(is_active);
+      paramCounter++;
     }
     
-    updates.push('updated_by = ?');
+    updates.push(`updated_by = $${paramCounter}`);
     params.push((req as any).user?.email || 'system');
-    updates.push('updated_at = CURRENT_TIMESTAMP');
+    paramCounter++;
+    updates.push(`updated_at = CURRENT_TIMESTAMP`);
     
     params.push(id);
     
@@ -162,7 +185,7 @@ export const updateScoringRule = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    const query = `UPDATE scoring_rules SET ${updates.join(', ')} WHERE id = ?`;
+    const query = `UPDATE scoring_rules SET ${updates.join(', ')} WHERE id = $${paramCounter}`;
     
     await runAsync(db, query, params);
 
@@ -183,9 +206,10 @@ export const deleteScoringRule = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Check if rule exists
+    // FIXED: Changed ? to $1
     const rule = await getAsync<any>(
       db, 
-      'SELECT id FROM scoring_rules WHERE id = ?', 
+      'SELECT id FROM scoring_rules WHERE id = $1', 
       [id]
     );
     
@@ -193,8 +217,9 @@ export const deleteScoringRule = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Scoring rule not found' });
     }
 
+    // FIXED: Changed ? to $1
     await runAsync(db, 
-      'DELETE FROM scoring_rules WHERE id = ?',
+      'DELETE FROM scoring_rules WHERE id = $1',
       [id]
     );
 
@@ -213,18 +238,21 @@ export const getIndicatorRules = async (req: Request, res: Response) => {
     const { indicator_id } = req.params;
     const db = getDB();
     
-    const rules = await allAsync<any[]>(db, 
+    // FIXED: Changed ? to $1 and generic type
+    const rules = await allAsync<any>(
+      db, 
       `SELECT sr.*, i.name as indicator_name, i.code as indicator_code
        FROM scoring_rules sr
        JOIN indicators i ON sr.indicator_id = i.id
-       WHERE sr.indicator_id = ? AND sr.is_active = 1
+       WHERE sr.indicator_id = $1 AND sr.is_active = true
        ORDER BY sr.parameter, sr.points DESC`,
       [indicator_id]
     );
     
+    // FIXED: Changed ? to $1
     const indicator = await getAsync<any>(
       db, 
-      'SELECT id, name, code, weight, max_score as maxScore, category FROM indicators WHERE id = ?',
+      'SELECT id, name, code, weight, max_score as "maxScore", category FROM indicators WHERE id = $1',
       [indicator_id]
     );
 
@@ -234,7 +262,7 @@ export const getIndicatorRules = async (req: Request, res: Response) => {
         indicator: indicator || null,
         rules,
         totalRules: rules.length,
-        maxPossibleScore: rules.reduce((sum, rule) => sum + (rule.points || 0), 0)
+        maxPossibleScore: rules.reduce((sum: number, rule: any) => sum + (rule.points || 0), 0)
       }
     });
   } catch (err) {
@@ -257,9 +285,11 @@ export const calculateScore = async (req: Request, res: Response) => {
     const db = getDB();
     
     // Get all active rules for this indicator
-    const rules = await allAsync<any[]>(db, 
+    // FIXED: Changed ? to $1 and generic type
+    const rules = await allAsync<any>(
+      db, 
       `SELECT * FROM scoring_rules 
-       WHERE indicator_id = ? AND is_active = 1 
+       WHERE indicator_id = $1 AND is_active = true 
        ORDER BY points DESC`,
       [indicator_id]
     );
@@ -281,6 +311,7 @@ export const calculateScore = async (req: Request, res: Response) => {
             try {
               // Simple condition evaluation
               const condition = rule.condition.replace(/\[value\]/g, paramValue);
+              // eslint-disable-next-line no-eval
               applies = eval(condition);
             } catch (e) {
               console.error('Error evaluating condition:', e);
@@ -323,9 +354,10 @@ export const calculateScore = async (req: Request, res: Response) => {
     }
     
     // Get indicator max score
+    // FIXED: Changed ? to $1
     const indicator = await getAsync<any>(
       db,
-      'SELECT max_score FROM indicators WHERE id = ?',
+      'SELECT max_score FROM indicators WHERE id = $1',
       [indicator_id]
     );
     

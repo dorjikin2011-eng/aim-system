@@ -1,5 +1,12 @@
+// backend/src/models/Parameter.ts
 import { getDB, getAsync, allAsync, runAsync } from './db';
 import { ParameterDefinition } from '../types/config';
+import crypto from 'crypto';
+
+// Helper function to generate UUID
+function generateUUID(): string {
+  return crypto.randomUUID();
+}
 
 export class Parameter {
   /**
@@ -8,7 +15,8 @@ export class Parameter {
   static async getById(id: string): Promise<ParameterDefinition | null> {
     try {
       const db = getDB();
-      const row = await getAsync<any>(db, 'SELECT * FROM parameters WHERE id = ?', [id]);
+      // FIXED: Changed ? to $1
+      const row = await getAsync<any>(db, 'SELECT * FROM parameters WHERE id = $1', [id]);
       
       if (!row) return null;
       
@@ -25,9 +33,10 @@ export class Parameter {
   static async getByIndicatorId(indicatorId: string): Promise<ParameterDefinition[]> {
     try {
       const db = getDB();
-      const rows = await allAsync<any[]>(
+      // FIXED: Changed ? to $1 and generic type
+      const rows = await allAsync<any>(
         db, 
-        'SELECT * FROM parameters WHERE indicator_id = ? ORDER BY display_order', 
+        'SELECT * FROM parameters WHERE indicator_id = $1 ORDER BY display_order', 
         [indicatorId]
       );
       
@@ -49,16 +58,17 @@ export class Parameter {
     try {
       const db = getDB();
       
-      // Generate ID if not provided
-      const id = parameter.id || `param_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Generate ID if not provided - use UUID
+      const id = parameter.id || generateUUID();
       
+      // FIXED: Changed ? to $1, $2, etc. and boolean to true/false
       await runAsync(
         db,
         `INSERT INTO parameters (
           id, indicator_id, code, label, description, type,
           required, options, default_value, validation, ui_settings,
           display_order, is_active, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
         [
           id,
           parameter.indicatorId,
@@ -66,13 +76,13 @@ export class Parameter {
           parameter.label,
           parameter.description || null,
           parameter.type,
-          parameter.required ? 1 : 0,
+          parameter.required,
           JSON.stringify(parameter.options || []),
           parameter.defaultValue,
           JSON.stringify(parameter.validation || {}),
           JSON.stringify(parameter.uiSettings || {}),
           parameter.displayOrder || 0,
-          parameter.isActive !== false ? 1 : 0,
+          parameter.isActive !== false,
           JSON.stringify(parameter.metadata || {})
         ]
       );
@@ -103,10 +113,12 @@ export class Parameter {
       // Build update query
       const fields: string[] = [];
       const values: any[] = [];
+      let paramCounter = 1;
       
       const addField = (field: string, value: any) => {
-        fields.push(`${field} = ?`);
+        fields.push(`${field} = $${paramCounter}`);
         values.push(value);
+        paramCounter++;
       };
       
       if (updates.code !== undefined) {
@@ -122,7 +134,7 @@ export class Parameter {
         addField('type', updates.type);
       }
       if (updates.required !== undefined) {
-        addField('required', updates.required ? 1 : 0);
+        addField('required', updates.required);
       }
       if (updates.defaultValue !== undefined) {
         addField('default_value', updates.defaultValue);
@@ -143,7 +155,7 @@ export class Parameter {
         addField('metadata', JSON.stringify(updates.metadata || {}));
       }
       if (updates.isActive !== undefined) {
-        addField('is_active', updates.isActive ? 1 : 0);
+        addField('is_active', updates.isActive);
       }
       
       // Add WHERE clause value
@@ -151,7 +163,7 @@ export class Parameter {
       
       await runAsync(
         db,
-        `UPDATE parameters SET ${fields.join(', ')} WHERE id = ?`,
+        `UPDATE parameters SET ${fields.join(', ')} WHERE id = $${paramCounter}`,
         values
       );
       
@@ -171,9 +183,10 @@ export class Parameter {
     try {
       const db = getDB();
       
+      // FIXED: Changed ? to $1
       await runAsync(
         db,
-        'UPDATE parameters SET is_active = 0 WHERE id = ?',
+        'UPDATE parameters SET is_active = false WHERE id = $1',
         [id]
       );
       
@@ -193,9 +206,10 @@ export class Parameter {
     try {
       const db = getDB();
       
+      // FIXED: Changed ? to $1
       await runAsync(
         db,
-        'DELETE FROM parameters WHERE id = ?',
+        'DELETE FROM parameters WHERE id = $1',
         [id]
       );
       
@@ -215,29 +229,29 @@ export class Parameter {
     indicatorId: string,
     parameterIds: string[]
   ): Promise<boolean> {
+    // FIXED: Need to use client transaction for PostgreSQL
+    const db = getDB();
+    const client = await db.connect();
+    
     try {
-      const db = getDB();
+      await client.query('BEGIN');
       
-      await runAsync(db, 'BEGIN TRANSACTION');
-      
-      try {
-        for (let i = 0; i < parameterIds.length; i++) {
-          await runAsync(
-            db,
-            'UPDATE parameters SET display_order = ? WHERE id = ? AND indicator_id = ?',
-            [i, parameterIds[i], indicatorId]
-          );
-        }
-        
-        await runAsync(db, 'COMMIT');
-        return true;
-      } catch (error) {
-        await runAsync(db, 'ROLLBACK');
-        throw error;
+      for (let i = 0; i < parameterIds.length; i++) {
+        // FIXED: Changed ? to $1, $2, $3
+        await client.query(
+          'UPDATE parameters SET display_order = $1 WHERE id = $2 AND indicator_id = $3',
+          [i, parameterIds[i], indicatorId]
+        );
       }
+      
+      await client.query('COMMIT');
+      return true;
     } catch (error) {
+      await client.query('ROLLBACK');
       console.error('Error reordering parameters:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
@@ -254,8 +268,15 @@ export class Parameter {
       const db = getDB();
       
       // Build WHERE clause
-      const whereClause = indicatorId ? 'WHERE indicator_id = ?' : '';
-      const values = indicatorId ? [indicatorId] : [];
+      let whereClause = '';
+      const values: any[] = [];
+      let paramCounter = 1;
+      
+      if (indicatorId) {
+        whereClause = `WHERE indicator_id = $${paramCounter}`;
+        values.push(indicatorId);
+        paramCounter++;
+      }
       
       // Total count
       const totalResult = await getAsync<{ count: number }>(
@@ -265,18 +286,21 @@ export class Parameter {
       );
       
       // Active count
+      // FIXED: Changed is_active = 1 to true
+      const activeValues = indicatorId ? [indicatorId] : [];
       const activeResult = await getAsync<{ count: number }>(
         db,
-        `SELECT COUNT(*) as count FROM parameters WHERE is_active = 1 ${indicatorId ? 'AND indicator_id = ?' : ''}`,
-        values
+        `SELECT COUNT(*) as count FROM parameters WHERE is_active = true ${indicatorId ? `AND indicator_id = $${activeValues.length}` : ''}`,
+        activeValues
       );
       
       // Count by type
       try {
-        const typeResult = await allAsync<any[]>(
+        const typeValues = indicatorId ? [indicatorId] : [];
+        const typeResult = await allAsync<any>(
           db,
-          `SELECT type, COUNT(*) as count FROM parameters WHERE is_active = 1 ${indicatorId ? 'AND indicator_id = ?' : ''} GROUP BY type`,
-          values
+          `SELECT type, COUNT(*) as count FROM parameters WHERE is_active = true ${indicatorId ? `AND indicator_id = $${typeValues.length}` : ''} GROUP BY type`,
+          typeValues
         );
         
         const byType: Record<string, number> = {};
@@ -285,24 +309,24 @@ export class Parameter {
         if (typeResult && Array.isArray(typeResult)) {
           typeResult.forEach(row => {
             if (row && row.type) {
-              byType[row.type] = row.count || 0;
+              byType[row.type] = Number(row.count) || 0;
             }
           });
         }
         
         return {
-          total: totalResult?.count || 0,
+          total: Number(totalResult?.count) || 0,
           byType,
-          active: activeResult?.count || 0,
-          inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
+          active: Number(activeResult?.count) || 0,
+          inactive: (Number(totalResult?.count) || 0) - (Number(activeResult?.count) || 0)
         };
       } catch (error) {
         console.error('Error getting parameter statistics:', error);
         return {
-          total: totalResult?.count || 0,
+          total: Number(totalResult?.count) || 0,
           byType: {},
-          active: activeResult?.count || 0,
-          inactive: (totalResult?.count || 0) - (activeResult?.count || 0)
+          active: Number(activeResult?.count) || 0,
+          inactive: (Number(totalResult?.count) || 0) - (Number(activeResult?.count) || 0)
         };
       }
     } catch (error) {
@@ -350,19 +374,20 @@ export class Parameter {
     }
     
     // Convert database snake_case to TypeScript camelCase
+    // FIXED: Convert boolean values properly
     return {
       id: row.id,
       code: row.code,
       label: row.label,
       description: row.description,
       type: row.type as any,
-      required: row.required === 1,
+      required: row.required === true,
       defaultValue: row.default_value,
       options,
       validation,
       uiSettings,
       displayOrder: row.display_order || 0,
-      isActive: row.is_active === 1,
+      isActive: row.is_active === true,
       metadata,
       scoringRuleIds: [],
       dependencies: []
@@ -375,54 +400,52 @@ export class Parameter {
   static async batchCreate(
     parameters: (ParameterDefinition & { indicatorId: string })[]
   ): Promise<string[]> {
+    const db = getDB();
+    const client = await db.connect();
+    
     try {
-      const db = getDB();
+      await client.query('BEGIN');
       
-      await runAsync(db, 'BEGIN TRANSACTION');
+      const createdIds: string[] = [];
       
-      try {
-        const createdIds: string[] = [];
+      for (const parameter of parameters) {
+        const id = parameter.id || generateUUID();
         
-        for (const parameter of parameters) {
-          const id = parameter.id || `param_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          
-          await runAsync(
-            db,
-            `INSERT INTO parameters (
-              id, indicator_id, code, label, description, type,
-              required, options, default_value, validation, ui_settings,
-              display_order, is_active, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              id,
-              parameter.indicatorId,
-              parameter.code,
-              parameter.label,
-              parameter.description || null,
-              parameter.type,
-              parameter.required ? 1 : 0,
-              JSON.stringify(parameter.options || []),
-              parameter.defaultValue,
-              JSON.stringify(parameter.validation || {}),
-              JSON.stringify(parameter.uiSettings || {}),
-              parameter.displayOrder || 0,
-              parameter.isActive !== false ? 1 : 0,
-              JSON.stringify(parameter.metadata || {})
-            ]
-          );
-          
-          createdIds.push(id);
-        }
+        await client.query(
+          `INSERT INTO parameters (
+            id, indicator_id, code, label, description, type,
+            required, options, default_value, validation, ui_settings,
+            display_order, is_active, metadata
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+          [
+            id,
+            parameter.indicatorId,
+            parameter.code,
+            parameter.label,
+            parameter.description || null,
+            parameter.type,
+            parameter.required,
+            JSON.stringify(parameter.options || []),
+            parameter.defaultValue,
+            JSON.stringify(parameter.validation || {}),
+            JSON.stringify(parameter.uiSettings || {}),
+            parameter.displayOrder || 0,
+            parameter.isActive !== false,
+            JSON.stringify(parameter.metadata || {})
+          ]
+        );
         
-        await runAsync(db, 'COMMIT');
-        return createdIds;
-      } catch (error) {
-        await runAsync(db, 'ROLLBACK');
-        throw error;
+        createdIds.push(id);
       }
+      
+      await client.query('COMMIT');
+      return createdIds;
     } catch (error) {
+      await client.query('ROLLBACK');
       console.error('Error batch creating parameters:', error);
       throw error;
+    } finally {
+      client.release();
     }
   }
 

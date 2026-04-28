@@ -25,7 +25,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     // ✅ Only redirect after auth is loaded and user exists
     if (!authLoading && user) {
-      const allowedRoles = ['admin', 'system_admin']; // ✅ Both admin roles
+      const allowedRoles = ['admin', 'system_admin', 'viewer'];
       if (!allowedRoles.includes(user.role)) {
         switch (user.role) {
           case 'prevention_officer':

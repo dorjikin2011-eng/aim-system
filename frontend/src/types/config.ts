@@ -2,21 +2,8 @@
 
 // ==================== CORE TYPES ====================
 export type IndicatorCategory = 
-  | 'compliance' 
-  | 'capacity' 
-  | 'enforcement' 
-  | 'responsiveness' 
-  | 'innovation'
-  | 'other'
-  | 'iccs_framework'        // Internal Corruption Control Systems Framework
-  | 'integrity_training'    // Integrity Training & Capacity Building
-  | 'asset_declaration'     // Asset Declaration Compliance
-  | 'case_handling'        // Corruption Case Handling & Resolution
-  | 'atr_timeliness'       // ATR Timeliness & Responsiveness
   | 'integrity_promotion'  // Integrity Promotion (from your frontend)
-  | 'corruption_accountability' // Corruption Accountability (from your frontend)
-  | 'general'              // General indicators
-  | 'custom';              // Custom indicators
+  | 'corruption_accountability'; // Corruption Accountability (from your frontend)
 
 export type ParameterType = 
   | 'number'
@@ -493,17 +480,6 @@ export interface CategoryOption {
 }
 
 export const INDICATOR_CATEGORIES: CategoryOption[] = [
-  { value: 'compliance', label: 'Compliance', description: 'Regulatory and policy compliance indicators' },
-  { value: 'capacity', label: 'Capacity Building', description: 'Training and capacity development indicators' },
-  { value: 'enforcement', label: 'Enforcement', description: 'Case handling and enforcement indicators' },
-  { value: 'responsiveness', label: 'Responsiveness', description: 'Timeliness and response indicators' },
-  { value: 'innovation', label: 'Innovation', description: 'Innovation and digital transformation indicators' },
-  { value: 'other', label: 'Other', description: 'Miscellaneous indicators' },
-  { value: 'iccs_framework', label: 'ICCS Framework', description: 'Internal Corruption Control Systems' },
-  { value: 'integrity_training', label: 'Integrity Training', description: 'Training and awareness programs' },
-  { value: 'asset_declaration', label: 'Asset Declaration', description: 'Asset declaration compliance' },
-  { value: 'case_handling', label: 'Case Handling', description: 'Corruption case handling and resolution' },
-  { value: 'atr_timeliness', label: 'ATR Timeliness', description: 'ATR submission timeliness' },
   { value: 'integrity_promotion', label: 'Integrity Promotion', description: 'Integrity promotion activities' },
   { value: 'corruption_accountability', label: 'Corruption Accountability', description: 'Corruption accountability metrics' },
 ];

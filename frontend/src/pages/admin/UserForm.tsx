@@ -45,7 +45,7 @@ export default function UserForm() {
   const [loading, setLoading] = useState(false);
   const [fetchingAssignments, setFetchingAssignments] = useState(false);
   const [error, setError] = useState('');
-  const [sendEmail, setSendEmail] = useState(true); // ✅ Default to true for new users
+  const [sendEmail, setSendEmail] = useState(true);
   const navigate = useNavigate();
   const { id } = useParams();
 
@@ -69,17 +69,43 @@ export default function UserForm() {
 
   const fetchAgencies = async () => {
     try {
-      const res = await fetch('${API_BASE}/api/admin/agencies');
+      const token = localStorage.getItem('token');
+      // ✅ FIXED: Use backticks for template literal
+      const res = await fetch(`${API_BASE}/api/admin/agencies`, {
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        }
+      });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: Failed to load agencies`);
+      }
+      
       const data = await res.json();
-      setAgencies(data.agencies || []);
+      setAgencies(data.agencies || data.data || []);
     } catch (err) {
+      console.error('Error fetching agencies:', err);
       setError('Failed to load agencies');
     }
   };
 
   const fetchUser = async (userId: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/admin/users/${userId}`);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/admin/users/${userId}`, {
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        }
+      });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: User not found`);
+      }
+      
       const data = await res.json();
       if (data.success && data.user) {
         const userData = data.user;
@@ -88,7 +114,7 @@ export default function UserForm() {
           email: userData.email,
           name: userData.name,
           role: userData.role,
-          agencyId: userData.agency_id || null,
+          agencyId: userData.agency_id || userData.agencyId || null,
           phone: userData.phone || '',
           position: userData.position || '',
           status: userData.status || 'active'
@@ -96,18 +122,31 @@ export default function UserForm() {
       } else {
         setError('User not found');
       }
-    } catch (err) {
-      setError('Failed to load user');
+    } catch (err: any) {
+      console.error('Error fetching user:', err);
+      setError(err.message || 'Failed to load user');
     }
   };
 
   const fetchOfficerAssignments = async (officerId: string) => {
     setFetchingAssignments(true);
     try {
-      const res = await fetch(`${API_BASE}/api/admin/assignments/officers/${officerId}`);
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/admin/assignments/officers/${officerId}`, {
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        }
+      });
+      
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: Failed to fetch assignments`);
+      }
+      
       const data = await res.json();
       if (data.success) {
-        setAssignments(data.assignments || []);
+        setAssignments(data.assignments || data.data || []);
       }
     } catch (err) {
       console.error('Failed to fetch assignments:', err);
@@ -129,10 +168,12 @@ export default function UserForm() {
     }
 
     try {
-      const url = id ? `${API_BASE}/api/admin/users/${id}` : '${API_BASE}/api/admin/users';
+      // ✅ FIXED: Use backticks for template literal
+      const url = id ? `${API_BASE}/api/admin/users/${id}` : `${API_BASE}/api/admin/users`;
       const method = id ? 'PUT' : 'POST';
+      const token = localStorage.getItem('token');
 
-      // ✅ Include sendEmail flag in payload
+      // Include sendEmail flag in payload
       const payload = {
         email: user.email,
         name: user.name,
@@ -143,20 +184,29 @@ export default function UserForm() {
         sendEmail: !id ? sendEmail : undefined // Only for new users
       };
 
+      console.log(`📤 ${method} request to:`, url);
+      console.log('📦 Payload:', payload);
+
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: { 
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        },
         body: JSON.stringify(payload)
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || 'Operation failed');
+        throw new Error(data.error || data.message || `HTTP ${res.status}: Operation failed`);
       }
 
+      console.log('✅ User saved successfully:', data);
       navigate('/admin/users');
     } catch (err: any) {
+      console.error('❌ Error saving user:', err);
       setError(err.message);
       setLoading(false);
     }
@@ -431,7 +481,7 @@ export default function UserForm() {
             </div>
           )}
 
-          {/* ✅ Email Notification Checkbox */}
+          {/* Email Notification Checkbox */}
           {!id && (
             <div className="mb-6 flex items-center">
               <input

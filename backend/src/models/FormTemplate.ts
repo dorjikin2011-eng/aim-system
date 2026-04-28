@@ -11,9 +11,92 @@ import {
 export class FormTemplate {
   
   /**
-   * Get all form templates with pagination
+   * Ensure form_templates table exists in PostgreSQL
+   */
+  static async ensureTable(): Promise<void> {
+    const db = getDB();
+    
+    // Create form_templates table for PostgreSQL
+    await runAsync(
+      db,
+      `CREATE TABLE IF NOT EXISTS form_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        template_type TEXT DEFAULT 'assessment',
+        indicator_ids JSONB DEFAULT '[]'::jsonb,
+        sections JSONB DEFAULT '[]'::jsonb,
+        validation_rules JSONB DEFAULT '{}'::jsonb,
+        ui_config JSONB DEFAULT '{}'::jsonb,
+        version TEXT DEFAULT '1.0.0',
+        is_active BOOLEAN DEFAULT TRUE,
+        category TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by TEXT,
+        updated_by TEXT
+      )`
+    );
+    
+    // Create template_versions table for PostgreSQL
+    await runAsync(
+      db,
+      `CREATE TABLE IF NOT EXISTS template_versions (
+        id SERIAL PRIMARY KEY,
+        template_id TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        template_data JSONB NOT NULL,
+        description TEXT,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (template_id) REFERENCES form_templates(id) ON DELETE CASCADE
+      )`
+    );
+  }
+
+  /**
+   * Get all form templates (without pagination - for simple queries)
    */
   static async getAll(params?: {
+  category?: string;
+  activeOnly?: boolean;
+}): Promise<FormTemplateType[]> {
+  try {
+    const db = getDB();
+    const { category, activeOnly = false } = params || {};
+    
+    const conditions: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+    
+    if (category) {
+      conditions.push(`template_type = $${paramIndex++}`);
+      values.push(category);
+    }
+    
+    if (activeOnly) {
+      conditions.push(`is_active = $${paramIndex++}`);
+      values.push(true);
+    }
+    
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    
+    const rows = await allAsync<any>(
+      db,
+      `SELECT * FROM form_templates ${whereClause} ORDER BY created_at DESC`,
+      values
+    );
+    
+    return rows.map(row => this.mapRowToTemplate(row));  // ← Use the parser
+  } catch (error) {
+    console.error('Error getting all templates:', error);
+    return [];
+  }
+}
+  /**
+   * Get form templates with pagination (for admin views)
+   */
+  static async getAllWithPagination(params?: {
     category?: string;
     activeOnly?: boolean;
     page?: number;
@@ -29,6 +112,8 @@ export class FormTemplate {
   }> {
     try {
       const db = getDB();
+      await this.ensureTable();
+      
       const {
         category,
         activeOnly = false,
@@ -36,38 +121,39 @@ export class FormTemplate {
         limit = 20
       } = params || {};
       
-      // Build WHERE clause
-      const whereClauses: string[] = [];
+      const conditions: string[] = [];
       const values: any[] = [];
+      let paramIndex = 1;
       
       if (category) {
-        whereClauses.push('category = ?');
+        conditions.push(`template_type = $${paramIndex++}`);
         values.push(category);
       }
       
       if (activeOnly) {
-        whereClauses.push('is_active = 1');
+        conditions.push(`is_active = $${paramIndex++}`);
+        values.push(true);
       }
       
-      const whereClause = whereClauses.length > 0 
-        ? `WHERE ${whereClauses.join(' AND ')}` 
-        : '';
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
       
       // Get total count
-      const countResult = await getAsync<{ count: number }>(
+      const countResult = await getAsync<{ count: string }>(
         db,
         `SELECT COUNT(*) as count FROM form_templates ${whereClause}`,
         values
       );
       
-      const total = countResult?.count || 0;
+      const total = parseInt(countResult?.count || '0', 10);
       
       // Get paginated results
       const offset = (page - 1) * limit;
+      values.push(limit, offset);
+      
       const rows = await allAsync<any>(
         db,
-        `SELECT * FROM form_templates ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-        [...values, limit, offset]
+        `SELECT * FROM form_templates ${whereClause} ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
+        values
       );
       
       const data = rows.map(row => this.mapRowToTemplate(row));
@@ -82,8 +168,16 @@ export class FormTemplate {
         }
       };
     } catch (error) {
-      console.error('Error getting all templates:', error);
-      throw error;
+      console.error('Error getting templates with pagination:', error);
+      return {
+        data: [],
+        pagination: {
+          total: 0,
+          page: 1,
+          limit: 20,
+          totalPages: 0
+        }
+      };
     }
   }
 
@@ -93,9 +187,11 @@ export class FormTemplate {
   static async getById(id: string): Promise<FormTemplateType | null> {
     try {
       const db = getDB();
+      await this.ensureTable();
+      
       const result = await getAsync<any>(
         db,
-        'SELECT * FROM form_templates WHERE id = ?',
+        'SELECT * FROM form_templates WHERE id = $1',
         [id]
       );
       
@@ -104,7 +200,7 @@ export class FormTemplate {
       return this.mapRowToTemplate(result);
     } catch (error) {
       console.error('Error getting template by ID:', error);
-      throw error;
+      return null;
     }
   }
 
@@ -114,9 +210,11 @@ export class FormTemplate {
   static async getByName(name: string): Promise<FormTemplateType | null> {
     try {
       const db = getDB();
+      await this.ensureTable();
+      
       const result = await getAsync<any>(
         db,
-        'SELECT * FROM form_templates WHERE name = ?',
+        'SELECT * FROM form_templates WHERE name = $1',
         [name]
       );
       
@@ -125,135 +223,146 @@ export class FormTemplate {
       return this.mapRowToTemplate(result);
     } catch (error) {
       console.error('Error getting template by name:', error);
-      throw error;
+      return null;
     }
   }
 
-  /**
-   * Create new template using the proper CreateFormTemplateInput type
-   */
-  static async create(
-    template: CreateFormTemplateInput
-  ): Promise<string> {
-    try {
-      const db = getDB();
-      
-      // Generate ID if not provided
-      const id = template.id || this.generateId();
-      
-      // Prepare template for database
-      const dbTemplate = this.prepareTemplateForDb({
-        ...template,
-        id,
-        version: '1.0.0',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        createdBy: template.createdBy,
-        updatedBy: template.createdBy
-      });
-      
-      await runAsync(
-        db,
-        `INSERT INTO form_templates (
-          id, name, description, template_type, indicator_ids, 
-          sections, validation_rules, ui_config, version, 
-          is_active, created_by, updated_by, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          dbTemplate.id,
-          dbTemplate.name,
-          dbTemplate.description,
-          dbTemplate.template_type,
-          dbTemplate.indicator_ids,
-          dbTemplate.sections,
-          dbTemplate.validation_rules,
-          dbTemplate.ui_config,
-          dbTemplate.version,
-          dbTemplate.is_active,
-          template.createdBy,
-          template.createdBy,
-          new Date().toISOString(),
-          new Date().toISOString()
-        ]
-      );
-      
-      // Create initial version
-      await this.createVersion(id, dbTemplate, template.createdBy);
-      
-      return id;
-    } catch (error) {
-      console.error('Error creating template:', error);
-      throw error;
-    }
+  static async create(template: CreateFormTemplateInput): Promise<string> {
+  try {
+    const db = getDB();
+    await this.ensureTable();
+    
+    const id = template.id || this.generateId();
+    
+    // FORCE set template_type - never allow null
+    const templateType = template.templateType || template.template_type || 'assessment';
+    
+    const dbTemplate = {
+      id,
+      name: template.name,
+      description: template.description || '',
+      template_type: templateType,  // ← Always has a value
+      indicator_ids: JSON.stringify(template.indicatorIds || []),
+      sections: JSON.stringify(template.sections || []),
+      validation_rules: JSON.stringify(template.validationRules || {}),
+      ui_config: JSON.stringify(template.uiConfig || {}),
+      version: template.version || '1.0.0',
+      is_active: template.isActive !== undefined ? template.isActive : true,
+      created_by: template.createdBy || 'admin',
+      updated_by: template.createdBy || 'admin'
+    };
+    
+    await runAsync(
+      db,
+      `INSERT INTO form_templates (
+        id, name, description, template_type, indicator_ids, 
+        sections, validation_rules, ui_config, version, 
+        is_active, created_by, updated_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        dbTemplate.id,
+        dbTemplate.name,
+        dbTemplate.description,
+        dbTemplate.template_type,  // ← This should never be null now
+        dbTemplate.indicator_ids,
+        dbTemplate.sections,
+        dbTemplate.validation_rules,
+        dbTemplate.ui_config,
+        dbTemplate.version,
+        dbTemplate.is_active,
+        dbTemplate.created_by,
+        dbTemplate.updated_by
+      ]
+    );
+    
+    await this.createVersion(id, dbTemplate, template.createdBy || 'admin');
+    
+    return id;
+  } catch (error) {
+    console.error('Error creating template:', error);
+    throw error;
   }
+}
 
   /**
    * Update template
    */
-  static async update(
-    id: string,
-    updates: Partial<FormTemplateType>,
-    updatedBy: string
-  ): Promise<boolean> {
+  static async update(id: string, updates: Partial<FormTemplateType>, updatedBy: string): Promise<boolean> {
     try {
       const db = getDB();
+      await this.ensureTable();
       
-      // Get current template
       const current = await this.getById(id);
       if (!current) {
         throw new Error('Template not found');
       }
       
-      // Check if name is being changed and if it already exists
+      // Check name uniqueness
       if (updates.name && updates.name !== current.name) {
-        const existingWithName = await this.getByName(updates.name);
-        if (existingWithName && existingWithName.id !== id) {
+        const existing = await this.getByName(updates.name);
+        if (existing && existing.id !== id) {
           throw new Error(`Template with name "${updates.name}" already exists`);
         }
       }
       
-      // Merge updates with current data
-      const updatedTemplate = { ...current, ...updates, updatedBy, updatedAt: new Date().toISOString() };
-      
-      // Prepare for database
-      const dbTemplate = this.prepareTemplateForDb(updatedTemplate);
-      
-      // Build update query
       const updateFields: string[] = [];
       const values: any[] = [];
+      let paramIndex = 1;
       
-      const addField = (field: string, value: any) => {
-        updateFields.push(`${field} = ?`);
-        values.push(value);
-      };
+      if (updates.name !== undefined) {
+        updateFields.push(`name = $${paramIndex++}`);
+        values.push(updates.name);
+      }
+      if (updates.description !== undefined) {
+        updateFields.push(`description = $${paramIndex++}`);
+        values.push(updates.description);
+      }
+      if (updates.templateType !== undefined) {
+        updateFields.push(`template_type = $${paramIndex++}`);
+        values.push(updates.templateType);
+      }
+      if (updates.indicatorIds !== undefined) {
+        updateFields.push(`indicator_ids = $${paramIndex++}`);
+        values.push(JSON.stringify(updates.indicatorIds));
+      }
+      if (updates.sections !== undefined) {
+        updateFields.push(`sections = $${paramIndex++}`);
+        values.push(JSON.stringify(updates.sections));
+      }
+      if (updates.validationRules !== undefined) {
+        updateFields.push(`validation_rules = $${paramIndex++}`);
+        values.push(JSON.stringify(updates.validationRules));
+      }
+      if (updates.uiConfig !== undefined) {
+        updateFields.push(`ui_config = $${paramIndex++}`);
+        values.push(JSON.stringify(updates.uiConfig));
+      }
+      if (updates.version !== undefined) {
+        updateFields.push(`version = $${paramIndex++}`);
+        values.push(updates.version);
+      }
+      if (updates.isActive !== undefined) {
+        updateFields.push(`is_active = $${paramIndex++}`);
+        values.push(updates.isActive);
+      }
       
-      if (updates.name !== undefined) addField('name', dbTemplate.name);
-      if (updates.description !== undefined) addField('description', dbTemplate.description);
-      if (updates.templateType !== undefined) addField('template_type', dbTemplate.template_type);
-      if (updates.indicatorIds !== undefined) addField('indicator_ids', dbTemplate.indicator_ids);
-      if (updates.sections !== undefined) addField('sections', dbTemplate.sections);
-      if (updates.validationRules !== undefined) addField('validation_rules', dbTemplate.validation_rules);
-      if (updates.uiConfig !== undefined) addField('ui_config', dbTemplate.ui_config);
-      if (updates.version !== undefined) addField('version', dbTemplate.version);
-      if (updates.isActive !== undefined) addField('is_active', dbTemplate.is_active);
+      updateFields.push(`updated_by = $${paramIndex++}`);
+      values.push(updatedBy);
+      updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
       
-      // Always update updated_by and updated_at
-      addField('updated_by', updatedBy);
-      addField('updated_at', new Date().toISOString());
-      
-      // Add WHERE clause value
       values.push(id);
       
-      const query = `UPDATE form_templates SET ${updateFields.join(', ')} WHERE id = ?`;
+      const query = `UPDATE form_templates SET ${updateFields.join(', ')} WHERE id = $${paramIndex++}`;
       
       await runAsync(db, query, values);
       
-      // Create new version after update
-      await this.createVersion(id, dbTemplate, updatedBy);
+      // Create version snapshot
+      const updatedTemplate = await this.getById(id);
+      if (updatedTemplate) {
+        await this.createVersion(id, this.prepareTemplateForDb(updatedTemplate), updatedBy);
+      }
       
-      // Verify the update was successful
-      const updated = await this.getById(id);
-      return updated !== null;
+      return true;
     } catch (error) {
       console.error('Error updating template:', error);
       throw error;
@@ -261,19 +370,19 @@ export class FormTemplate {
   }
 
   /**
-   * Delete template (soft delete)
+   * Soft delete template
    */
   static async delete(id: string, deletedBy: string): Promise<boolean> {
     try {
       const db = getDB();
+      await this.ensureTable();
       
       await runAsync(
         db,
-        'UPDATE form_templates SET is_active = 0, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        'UPDATE form_templates SET is_active = false, updated_by = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
         [deletedBy, id]
       );
       
-      // Verify the deletion by checking if the template is now inactive
       const template = await this.getById(id);
       return template !== null && !template.isActive;
     } catch (error) {
@@ -288,22 +397,14 @@ export class FormTemplate {
   static async hardDelete(id: string): Promise<boolean> {
     try {
       const db = getDB();
+      await this.ensureTable();
       
       // Delete versions first
-      await runAsync(
-        db,
-        'DELETE FROM template_versions WHERE template_id = ?',
-        [id]
-      );
+      await runAsync(db, 'DELETE FROM template_versions WHERE template_id = $1', [id]);
       
       // Delete template
-      await runAsync(
-        db,
-        'DELETE FROM form_templates WHERE id = ?',
-        [id]
-      );
+      await runAsync(db, 'DELETE FROM form_templates WHERE id = $1', [id]);
       
-      // Verify deletion by checking if template no longer exists
       const template = await this.getById(id);
       return template === null;
     } catch (error) {
@@ -315,24 +416,19 @@ export class FormTemplate {
   /**
    * Duplicate template
    */
-  static async duplicate(
-    originalId: string,
-    newName?: string,
-    createdBy: string = 'system'
-  ): Promise<string> {
+  static async duplicate(id: string, newName: string, createdBy: string): Promise<string> {
     try {
-      const original = await this.getById(originalId);
+      const original = await this.getById(id);
       if (!original) {
         throw new Error('Original template not found');
       }
       
-      // Remove auto-generated fields
-      const { id, createdAt, updatedAt, createdBy: originalCreatedBy, updatedBy: originalUpdatedBy, ...templateData } = original;
+      const { id: originalId, createdAt, updatedAt, createdBy: originalCreatedBy, updatedBy: originalUpdatedBy, ...templateData } = original;
       
       const newTemplate: CreateFormTemplateInput = {
         ...templateData,
-        name: newName || `${original.name} (Copy)`,
-        isActive: false, // Keep duplicate inactive by default
+        name: newName,
+        isActive: false,
         createdBy
       };
       
@@ -344,27 +440,27 @@ export class FormTemplate {
   }
 
   /**
-   * Publish template (activate and deactivate others in same template type)
+   * Publish template (activate and deactivate others)
    */
   static async publish(id: string, publishedBy: string): Promise<boolean> {
     try {
       const db = getDB();
+      await this.ensureTable();
       
-      // Get template to get its template type
       const template = await this.getById(id);
       if (!template) {
         throw new Error('Template not found');
       }
       
       // Start transaction
-      await runAsync(db, 'BEGIN TRANSACTION');
+      await runAsync(db, 'BEGIN');
       
       try {
-        // Deactivate other templates in same template type
+        // Deactivate other templates of same type
         await runAsync(
           db,
-          'UPDATE form_templates SET is_active = 0 WHERE template_type = ? AND id != ?',
-          [template.templateType, id]
+          'UPDATE form_templates SET is_active = false, updated_by = $1, updated_at = CURRENT_TIMESTAMP WHERE template_type = $2 AND id != $3',
+          [publishedBy, template.templateType, id]
         );
         
         // Activate this template
@@ -400,42 +496,23 @@ export class FormTemplate {
   static async getActiveTemplates(templateType?: TemplateType): Promise<FormTemplateType[]> {
     try {
       const db = getDB();
+      await this.ensureTable();
       
-      const query = templateType
-        ? 'SELECT * FROM form_templates WHERE is_active = 1 AND template_type = ? ORDER BY created_at DESC'
-        : 'SELECT * FROM form_templates WHERE is_active = 1 ORDER BY created_at DESC';
+      let query = 'SELECT * FROM form_templates WHERE is_active = true';
+      const values: any[] = [];
       
-      const values = templateType ? [templateType] : [];
+      if (templateType) {
+        query += ' AND template_type = $1';
+        values.push(templateType);
+      }
+      
+      query += ' ORDER BY created_at DESC';
       
       const rows = await allAsync<any>(db, query, values);
-      
       return rows.map(row => this.mapRowToTemplate(row));
     } catch (error) {
       console.error('Error getting active templates:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get templates by indicator ID
-   */
-  static async getByIndicatorId(indicatorId: string): Promise<FormTemplateType[]> {
-    try {
-      const db = getDB();
-      
-      const rows = await allAsync<any>(
-        db,
-        `SELECT * FROM form_templates 
-         WHERE is_active = 1 
-         AND indicator_ids LIKE ? 
-         ORDER BY created_at DESC`,
-        [`%${indicatorId}%`]
-      );
-      
-      return rows.map(row => this.mapRowToTemplate(row));
-    } catch (error) {
-      console.error('Error getting templates by indicator ID:', error);
-      throw error;
+      return [];
     }
   }
 
@@ -445,12 +522,11 @@ export class FormTemplate {
   static async getVersions(id: string): Promise<any[]> {
     try {
       const db = getDB();
+      await this.ensureTable();
       
       const rows = await allAsync<any>(
         db,
-        `SELECT * FROM template_versions 
-         WHERE template_id = ? 
-         ORDER BY created_at DESC`,
+        'SELECT * FROM template_versions WHERE template_id = $1 ORDER BY created_at DESC',
         [id]
       );
       
@@ -458,28 +534,28 @@ export class FormTemplate {
         id: row.id,
         templateId: row.template_id,
         version: row.version,
-        templateData: JSON.parse(row.template_data),
+        templateData: row.template_data,
         createdBy: row.created_by,
         createdAt: row.created_at,
         description: row.description
       }));
     } catch (error) {
       console.error('Error getting template versions:', error);
-      throw error;
+      return [];
     }
   }
 
   /**
-   * Restore to specific version
+   * Restore template to specific version
    */
   static async restoreVersion(id: string, versionId: string, restoredBy: string): Promise<boolean> {
     try {
       const db = getDB();
+      await this.ensureTable();
       
-      // Get the version data
       const version = await getAsync<any>(
         db,
-        'SELECT * FROM template_versions WHERE template_id = ? AND id = ?',
+        'SELECT * FROM template_versions WHERE template_id = $1 AND id = $2',
         [id, versionId]
       );
       
@@ -487,13 +563,10 @@ export class FormTemplate {
         throw new Error('Version not found');
       }
       
-      // Parse template data from version
-      const templateData = JSON.parse(version.template_data);
+      const templateData = version.template_data;
       
-      // Update template with version data
       const success = await this.update(id, templateData, restoredBy);
       
-      // Create a new version to record the restoration
       await this.createVersion(id, templateData, restoredBy, `Restored to version ${versionId}`);
       
       return success;
@@ -504,48 +577,7 @@ export class FormTemplate {
   }
 
   /**
-   * Create a version snapshot
-   */
-  private static async createVersion(
-    templateId: string, 
-    templateData: any, 
-    createdBy: string,
-    description?: string
-  ): Promise<void> {
-    try {
-      const db = getDB();
-      
-      // Get current version count for this template
-      const countResult = await getAsync<{ count: number }>(
-        db,
-        'SELECT COUNT(*) as count FROM template_versions WHERE template_id = ?',
-        [templateId]
-      );
-      
-      const versionNumber = (countResult?.count || 0) + 1;
-      
-      await runAsync(
-        db,
-        `INSERT INTO template_versions (
-          template_id, version, template_data, description, created_by, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          templateId,
-          versionNumber,
-          JSON.stringify(templateData),
-          description || `Version ${versionNumber}`,
-          createdBy,
-          new Date().toISOString()
-        ]
-      );
-    } catch (error) {
-      console.error('Error creating template version:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Validate template configuration
+   * Validate template
    */
   static async validateTemplate(template: Partial<FormTemplateType>): Promise<{
     isValid: boolean;
@@ -555,7 +587,6 @@ export class FormTemplate {
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // Basic validation
     if (!template.name?.trim()) {
       errors.push('Template name is required');
     } else if (template.name.length < 2) {
@@ -566,34 +597,8 @@ export class FormTemplate {
       errors.push('Template type is required');
     }
 
-    // Validate sections
-    if (template.sections && Array.isArray(template.sections)) {
-      if (template.sections.length === 0) {
-        errors.push('Template must have at least one section');
-      }
-      
-      template.sections.forEach((section, sectionIndex) => {
-        if (!section.title?.trim()) {
-          errors.push(`Section ${sectionIndex + 1}: Title is required`);
-        }
-        
-        // Validate fields in section
-        if (section.fields && Array.isArray(section.fields)) {
-          section.fields.forEach((field, fieldIndex) => {
-            if (!field.parameterCode?.trim()) {
-              errors.push(`Section ${sectionIndex + 1}, Field ${fieldIndex + 1}: Parameter code is required`);
-            }
-            
-            if (!field.label?.trim()) {
-              errors.push(`Section ${sectionIndex + 1}, Field ${fieldIndex + 1}: Label is required`);
-            }
-            
-            if (!field.type) {
-              errors.push(`Section ${sectionIndex + 1}, Field ${fieldIndex + 1}: Field type is required`);
-            }
-          });
-        }
-      });
+    if (template.sections && template.sections.length === 0) {
+      errors.push('Template must have at least one section');
     }
 
     return {
@@ -604,124 +609,105 @@ export class FormTemplate {
   }
 
   /**
-   * Map database row to FormTemplateType
+   * Create a version snapshot
    */
-  private static mapRowToTemplate(row: any): FormTemplateType {
-    // Parse JSON fields from database
-    const sections = row.sections ? JSON.parse(row.sections) : [];
-    const validationRules = row.validation_rules ? JSON.parse(row.validation_rules) : {};
-    const uiConfig = row.ui_config ? JSON.parse(row.ui_config) : {};
-    const indicatorIds = row.indicator_ids ? JSON.parse(row.indicator_ids) : [];
-    
-    // Convert database snake_case to TypeScript camelCase
-    return {
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      templateType: row.template_type as TemplateType,
-      indicatorIds: indicatorIds,
-      sections: sections.map((s: any) => this.mapSection(s)),
-      validationRules: validationRules,
-      uiConfig: uiConfig,
-      version: row.version,
-      isActive: row.is_active === 1,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      createdBy: row.created_by,
-      updatedBy: row.updated_by
-    };
+  private static async createVersion(
+    templateId: string,
+    templateData: any,
+    createdBy: string,
+    description?: string
+  ): Promise<void> {
+    try {
+      const db = getDB();
+      
+      const countResult = await getAsync<{ count: string }>(
+        db,
+        'SELECT COUNT(*) as count FROM template_versions WHERE template_id = $1',
+        [templateId]
+      );
+      
+      const versionNumber = (parseInt(countResult?.count || '0', 10)) + 1;
+      
+      await runAsync(
+        db,
+        `INSERT INTO template_versions (template_id, version, template_data, description, created_by)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [templateId, versionNumber, JSON.stringify(templateData), description || `Version ${versionNumber}`, createdBy]
+      );
+    } catch (error) {
+      console.error('Error creating template version:', error);
+    }
   }
 
   /**
-   * Map section from database to FormSection
-   */
-  private static mapSection(section: any): FormSection {
-    return {
-      id: section.id,
-      title: section.title,
-      description: section.description,
-      columns: section.columns || 1,
-      fields: (section.fields || []).map((f: any) => this.mapField(f)),
-      displayOrder: section.display_order || 0,
-      condition: section.condition
-    };
+ * Map database row to FormTemplateType
+ */
+private static mapRowToTemplate(row: any): FormTemplateType {
+  // Parse JSON fields - ensure they are arrays/objects
+  let sections = [];
+  let validationRules = {};
+  let uiConfig = {};
+  let indicatorIds = [];
+  
+  try {
+    sections = row.sections ? (typeof row.sections === 'string' ? JSON.parse(row.sections) : row.sections) : [];
+  } catch (e) {
+    sections = [];
   }
+  
+  try {
+    validationRules = row.validation_rules ? (typeof row.validation_rules === 'string' ? JSON.parse(row.validation_rules) : row.validation_rules) : {};
+  } catch (e) {
+    validationRules = {};
+  }
+  
+  try {
+    uiConfig = row.ui_config ? (typeof row.ui_config === 'string' ? JSON.parse(row.ui_config) : row.ui_config) : {};
+  } catch (e) {
+    uiConfig = {};
+  }
+  
+  try {
+    indicatorIds = row.indicator_ids ? (typeof row.indicator_ids === 'string' ? JSON.parse(row.indicator_ids) : row.indicator_ids) : [];
+  } catch (e) {
+    indicatorIds = [];
+  }
+  
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    templateType: row.template_type,
+    indicatorIds: indicatorIds,  // ← Now guaranteed to be an array
+    sections: sections,
+    validationRules: validationRules,
+    uiConfig: uiConfig,
+    version: row.version,
+    isActive: row.is_active === true || row.is_active === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by
+  };
+}
 
   /**
-   * Map field from database to FormField
-   */
-  private static mapField(field: any): FormField {
-    return {
-      id: field.id,
-      parameterCode: field.parameter_code,
-      indicatorId: field.indicator_id,
-      label: field.label,
-      type: field.type,
-      required: field.required || false,
-      width: field.width || 100,
-      displayOrder: field.display_order || 0,
-      condition: field.condition,
-      uiSettings: field.ui_settings || {}
-    };
-  }
-
-  /**
-   * Prepare template for database (camelCase to snake_case)
+   * Prepare template for database
    */
   private static prepareTemplateForDb(template: FormTemplateType): any {
-    const sections = template.sections.map(s => this.prepareSectionForDb(s));
-    const indicatorIds = JSON.stringify(template.indicatorIds || []);
-    const validationRules = JSON.stringify(template.validationRules || {});
-    const uiConfig = JSON.stringify(template.uiConfig || {});
-    
     return {
       id: template.id,
       name: template.name,
       description: template.description,
       template_type: template.templateType,
-      indicator_ids: indicatorIds,
-      sections: JSON.stringify(sections),
-      validation_rules: validationRules,
-      ui_config: uiConfig,
+      indicator_ids: JSON.stringify(template.indicatorIds || []),
+      sections: JSON.stringify(template.sections || []),
+      validation_rules: JSON.stringify(template.validationRules || {}),
+      ui_config: JSON.stringify(template.uiConfig || {}),
       version: template.version,
-      is_active: template.isActive ? 1 : 0,
+      is_active: template.isActive,
       created_by: template.createdBy,
-      updated_by: template.updatedBy,
-      created_at: template.createdAt,
-      updated_at: template.updatedAt
-    };
-  }
-
-  /**
-   * Prepare section for database (camelCase to snake_case)
-   */
-  private static prepareSectionForDb(section: FormSection): any {
-    return {
-      id: section.id,
-      title: section.title,
-      description: section.description,
-      columns: section.columns,
-      fields: section.fields.map(f => this.prepareFieldForDb(f)),
-      display_order: section.displayOrder,
-      condition: section.condition
-    };
-  }
-
-  /**
-   * Prepare field for database (camelCase to snake_case)
-   */
-  private static prepareFieldForDb(field: FormField): any {
-    return {
-      id: field.id,
-      parameter_code: field.parameterCode,
-      indicator_id: field.indicatorId,
-      label: field.label,
-      type: field.type,
-      required: field.required,
-      width: field.width,
-      display_order: field.displayOrder,
-      condition: field.condition,
-      ui_settings: field.uiSettings
+      updated_by: template.updatedBy
     };
   }
 
